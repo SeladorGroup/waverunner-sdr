@@ -1,0 +1,22 @@
+[package]
+name = "waverunner-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Terminal UI for Waverunner SDR platform"
+
+[[bin]]
+name = "waverunner-tui"
+path = "src/main.rs"
+
+[dependencies]
+wavecore = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
