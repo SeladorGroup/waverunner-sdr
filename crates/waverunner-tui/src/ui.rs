@@ -132,10 +132,17 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let step_str = format_step(app.step_hz());
     let gain_str = &app.gain;
 
+    let band_str = app
+        .frequency_db
+        .band_name(app.frequency)
+        .unwrap_or("Unknown");
+
     let mut spans = vec![
         Span::styled(" WaveRunner ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(&freq_str, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(" ", Style::default()),
+        Span::styled(band_str, Style::default().fg(Color::LightYellow)),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(&rate_str, Style::default().fg(Color::Green)),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),

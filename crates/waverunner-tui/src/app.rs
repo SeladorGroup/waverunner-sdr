@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 
 use wavecore::dsp::detection::Detection;
 use wavecore::dsp::statistics::SignalStats;
+use wavecore::frequency_db::FrequencyDb;
 use wavecore::mode::ModeController;
 use wavecore::session::{DecodedMessage, DemodVisData, SessionStats, SpectrumFrame};
 use wavecore::types::Frequency;
@@ -302,6 +303,9 @@ pub struct App {
 
     /// Audio volume 0-100%.
     pub volume: u8,
+
+    /// Regional frequency database for band identification.
+    pub frequency_db: FrequencyDb,
 }
 
 impl App {
@@ -347,6 +351,7 @@ impl App {
             buffer_occupancy: 0,
             events_dropped: 0,
             volume: 80,
+            frequency_db: FrequencyDb::auto_detect(),
         }
     }
 

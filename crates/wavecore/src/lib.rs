@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod buffer;
 pub mod dsp;
 pub mod error;
+pub mod frequency_db;
 pub mod hardware;
 pub mod logging;
 pub mod mode;

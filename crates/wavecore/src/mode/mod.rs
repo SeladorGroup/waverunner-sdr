@@ -55,7 +55,7 @@ impl ModeController {
         self.profiles = profile::load_embedded_profiles();
 
         // Load user profiles from ~/.config/waverunner/profiles/
-        if let Some(config_dir) = dirs_path() {
+        if let Some(config_dir) = crate::util::config_dir() {
             let user_dir = config_dir.join("profiles");
             if user_dir.is_dir() {
                 self.profiles
@@ -143,22 +143,6 @@ impl ModeController {
             Box::new(profile::ProfileMode::with_gain_override(p.clone(), gain_override))
                 as Box<dyn Mode>
         })
-    }
-}
-
-/// Get the config directory path (~/.config/waverunner).
-fn dirs_path() -> Option<std::path::PathBuf> {
-    // Use XDG_CONFIG_HOME or fallback to ~/.config
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        Some(std::path::PathBuf::from(xdg).join("waverunner"))
-    } else if let Ok(home) = std::env::var("HOME") {
-        Some(
-            std::path::PathBuf::from(home)
-                .join(".config")
-                .join("waverunner"),
-        )
-    } else {
-        None
     }
 }
 

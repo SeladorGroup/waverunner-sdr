@@ -94,6 +94,23 @@ pub fn format_step(hz: f64) -> String {
     }
 }
 
+/// Get the WaveRunner config directory (~/.config/waverunner).
+///
+/// Respects XDG_CONFIG_HOME, falls back to $HOME/.config.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        Some(std::path::PathBuf::from(xdg).join("waverunner"))
+    } else if let Ok(home) = std::env::var("HOME") {
+        Some(
+            std::path::PathBuf::from(home)
+                .join(".config")
+                .join("waverunner"),
+        )
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

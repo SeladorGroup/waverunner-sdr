@@ -5,6 +5,7 @@ use crossbeam_channel::select;
 
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::demod::mode_defaults;
+use wavecore::frequency_db::FrequencyDb;
 use wavecore::session::manager::SessionManager;
 use wavecore::session::{Command, DemodConfig, Event, SessionConfig};
 
@@ -60,29 +61,17 @@ impl ListenMode {
     }
 }
 
-/// Auto-detect demodulation mode from frequency.
-fn auto_mode(freq: f64) -> (&'static str, &'static str) {
-    let mhz = freq / 1e6;
-    match mhz {
-        f if (0.15..=0.28).contains(&f) => ("am", "LW AM"),
-        f if (0.52..=1.71).contains(&f) => ("am", "MW AM"),
-        f if (1.8..=30.0).contains(&f) => ("usb", "HF SSB"),
-        f if (87.5..=108.0).contains(&f) => ("wfm", "FM Broadcast"),
-        f if (108.0..=137.0).contains(&f) => ("am", "Airband AM"),
-        f if (137.0..=174.0).contains(&f) => ("fm", "VHF NFM"),
-        f if (225.0..=400.0).contains(&f) => ("am", "UHF Mil AM"),
-        f if (400.0..=470.0).contains(&f) => ("fm", "UHF NFM"),
-        f if (470.0..=862.0).contains(&f) => ("wfm", "UHF TV/FM"),
-        _ => ("fm", "NFM"),
-    }
-}
-
 pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
-    let (mode_str, band_name) = if let Some(mode) = args.mode {
-        (mode.as_str(), "Manual")
+    let db = FrequencyDb::auto_detect();
+
+    let (mode_string, band_name) = if let Some(mode) = args.mode {
+        (mode.as_str().to_string(), "Manual".to_string())
+    } else if let Some(band) = db.lookup(args.frequency) {
+        (band.modulation.to_string(), band.label.to_string())
     } else {
-        auto_mode(args.frequency)
+        ("fm".to_string(), "Unknown Band".to_string())
     };
+    let mode_str = mode_string.as_str();
 
     let defaults = mode_defaults(mode_str)
         .ok_or_else(|| anyhow::anyhow!("Unknown demod mode: {mode_str}"))?;

@@ -1,4 +1,5 @@
 pub mod analyze;
+pub mod bands;
 pub mod decode;
 pub mod demod;
 pub mod info;
@@ -40,6 +41,8 @@ pub enum Command {
     Recover(recover::RecoverArgs),
     /// Print environment diagnostics (OS, hardware, drivers)
     Probe(probe::ProbeArgs),
+    /// Show known frequency bands and channels for your region
+    Bands(bands::BandsArgs),
 }
 
 pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
@@ -55,5 +58,9 @@ pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
         Command::Analyze(args) => analyze::run(args, device_index).await,
         Command::Recover(args) => recover::run(args).await,
         Command::Probe(args) => probe::run(args).await,
+        Command::Bands(args) => {
+            bands::run(args)?;
+            Ok(())
+        }
     }
 }
