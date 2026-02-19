@@ -372,6 +372,23 @@ fn main() -> Result<()> {
                         }
                         app.annotation_count += 1; // reuse counter for visual feedback
                     }
+                    Action::ExportPng => {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let path = format!("/tmp/waverunner_spectrum_{timestamp}.png");
+                        let config = analysis::export::ExportConfig {
+                            path: std::path::PathBuf::from(&path),
+                            format: analysis::export::ExportFormat::Png,
+                            content: analysis::export::ExportContent::Spectrum {
+                                spectrum_db: app.dsp.spectrum_db.clone(),
+                                sample_rate: app.sample_rate,
+                                center_freq: app.frequency,
+                            },
+                        };
+                        session.send(Command::Export(config)).ok();
+                    }
                     Action::IdentifySignal => {
                         let result = wavecore::signal_identify::identify_instant(
                             app.frequency,

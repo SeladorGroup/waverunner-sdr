@@ -1,10 +1,13 @@
-//! Data export to CSV and JSON formats.
+//! Data export to CSV, JSON, and PNG formats.
 //!
 //! Exports spectrum snapshots, tracking time-series, measurement reports,
-//! decoded messages, and full analysis reports.
+//! decoded messages, and full analysis reports. PNG exports produce
+//! spectrum plots and waterfall images.
 
 use std::io::Write;
 use std::path::PathBuf;
+
+use image::{Rgb, RgbImage};
 
 /// Configuration for data export.
 #[derive(Debug, Clone)]
@@ -26,6 +29,8 @@ pub enum ExportFormat {
     Json,
     /// Tab-separated values.
     Tsv,
+    /// PNG image (spectrum plot or waterfall).
+    Png,
 }
 
 /// Content to export.
@@ -46,6 +51,12 @@ pub enum ExportContent {
     /// Detection log.
     Detections {
         detections: Vec<DetectionExport>,
+        center_freq: f64,
+    },
+    /// Waterfall data (multiple spectrum rows, oldest first).
+    Waterfall {
+        rows: Vec<Vec<f32>>,
+        sample_rate: f64,
         center_freq: f64,
     },
 }
@@ -107,6 +118,18 @@ pub fn export_to_file(config: &ExportConfig) -> Result<String, String> {
         }
         (ExportFormat::Tsv, ExportContent::Measurement(report)) => {
             export_measurement_tsv(&config.path, report)
+        }
+        // PNG exports
+        (ExportFormat::Png, ExportContent::Spectrum { spectrum_db, sample_rate, center_freq }) => {
+            export_spectrum_png(&config.path, spectrum_db, *sample_rate, *center_freq)
+        }
+        (ExportFormat::Png, ExportContent::Waterfall { rows, sample_rate, center_freq }) => {
+            export_waterfall_png(&config.path, rows, *sample_rate, *center_freq)
+        }
+        (ExportFormat::Png, _) => Err("PNG export only supports Spectrum and Waterfall content".to_string()),
+        // CSV/TSV don't support Waterfall
+        (_, ExportContent::Waterfall { .. }) => {
+            Err("Waterfall content is only supported with PNG format".to_string())
         }
     }
 }
@@ -345,6 +368,244 @@ fn export_measurement_tsv(
     Ok(path.display().to_string())
 }
 
+// ============================================================================
+// PNG exports (spectrum plot and waterfall image)
+// ============================================================================
+
+/// Color-map a dB value to an RGB color (dark blue → cyan → yellow → red).
+fn db_to_color(db: f32, min_db: f32, max_db: f32) -> Rgb<u8> {
+    let range = (max_db - min_db).max(1.0);
+    let t = ((db - min_db) / range).clamp(0.0, 1.0);
+
+    // 4-stop gradient: dark blue → cyan → yellow → red
+    let (r, g, b) = if t < 0.33 {
+        let s = t / 0.33;
+        (0.0, s * 0.8, 0.3 + s * 0.7) // dark blue → cyan
+    } else if t < 0.66 {
+        let s = (t - 0.33) / 0.33;
+        (s, 0.8 + s * 0.2, 1.0 - s) // cyan → yellow
+    } else {
+        let s = (t - 0.66) / 0.34;
+        (1.0, 1.0 - s * 0.7, 0.0) // yellow → red
+    };
+
+    Rgb([
+        (r * 255.0) as u8,
+        (g * 255.0) as u8,
+        (b * 255.0) as u8,
+    ])
+}
+
+/// Simple 3x5 pixel digit glyphs for axis labels (no font crate needed).
+const DIGIT_GLYPHS: [[u8; 15]; 11] = [
+    // 0
+    [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1],
+    // 1
+    [0,1,0, 1,1,0, 0,1,0, 0,1,0, 1,1,1],
+    // 2
+    [1,1,1, 0,0,1, 1,1,1, 1,0,0, 1,1,1],
+    // 3
+    [1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1],
+    // 4
+    [1,0,1, 1,0,1, 1,1,1, 0,0,1, 0,0,1],
+    // 5
+    [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1],
+    // 6
+    [1,1,1, 1,0,0, 1,1,1, 1,0,1, 1,1,1],
+    // 7
+    [1,1,1, 0,0,1, 0,1,0, 0,1,0, 0,1,0],
+    // 8
+    [1,1,1, 1,0,1, 1,1,1, 1,0,1, 1,1,1],
+    // 9
+    [1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1],
+    // . (dot)
+    [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,1,0],
+];
+
+/// Draw a small text string at (x, y) using 3x5 glyphs.
+fn draw_text(img: &mut RgbImage, x: u32, y: u32, text: &str, color: Rgb<u8>) {
+    let mut cx = x;
+    for ch in text.chars() {
+        let glyph_idx = match ch {
+            '0'..='9' => (ch as u8 - b'0') as usize,
+            '.' => 10,
+            '-' => {
+                // Draw a minus sign inline
+                for dx in 0..3u32 {
+                    if y + 2 < img.height() && cx + dx < img.width() {
+                        img.put_pixel(cx + dx, y + 2, color);
+                    }
+                }
+                cx += 4;
+                continue;
+            }
+            ' ' => {
+                cx += 4;
+                continue;
+            }
+            _ => {
+                cx += 4;
+                continue;
+            }
+        };
+        let glyph = &DIGIT_GLYPHS[glyph_idx];
+        for row in 0..5u32 {
+            for col in 0..3u32 {
+                if glyph[(row * 3 + col) as usize] == 1 {
+                    let px = cx + col;
+                    let py = y + row;
+                    if px < img.width() && py < img.height() {
+                        img.put_pixel(px, py, color);
+                    }
+                }
+            }
+        }
+        cx += 4;
+    }
+}
+
+fn export_spectrum_png(
+    path: &PathBuf,
+    spectrum_db: &[f32],
+    sample_rate: f64,
+    center_freq: f64,
+) -> Result<String, String> {
+    let n = spectrum_db.len();
+    if n == 0 {
+        return Err("Empty spectrum".to_string());
+    }
+
+    let width: u32 = 1024;
+    let height: u32 = 512;
+    let margin_left: u32 = 50;
+    let margin_bottom: u32 = 30;
+    let margin_top: u32 = 20;
+    let margin_right: u32 = 10;
+    let plot_w = width - margin_left - margin_right;
+    let plot_h = height - margin_top - margin_bottom;
+
+    let bg = Rgb([20u8, 20, 30]);
+    let grid_color = Rgb([50, 50, 60]);
+    let trace_color = Rgb([0, 220, 220]);
+    let text_color = Rgb([180, 180, 180]);
+
+    let mut img = RgbImage::from_pixel(width, height, bg);
+
+    // Compute dB range
+    let min_db = spectrum_db.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_db = spectrum_db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let db_range = (max_db - min_db).max(1.0);
+    let db_floor = min_db - db_range * 0.05;
+    let db_ceil = max_db + db_range * 0.05;
+    let effective_range = db_ceil - db_floor;
+
+    // Draw grid lines (horizontal = power, vertical = frequency)
+    for i in 0..=5 {
+        let y = margin_top + (plot_h as f32 * i as f32 / 5.0) as u32;
+        for x in margin_left..width - margin_right {
+            if x < img.width() && y < img.height() {
+                img.put_pixel(x, y, grid_color);
+            }
+        }
+        // Power label
+        let db_val = db_ceil - (effective_range * i as f32 / 5.0);
+        draw_text(&mut img, 2, y.saturating_sub(2), &format!("{db_val:.0}"), text_color);
+    }
+
+    for i in 0..=4 {
+        let x = margin_left + (plot_w as f32 * i as f32 / 4.0) as u32;
+        for y in margin_top..height - margin_bottom {
+            if x < img.width() && y < img.height() {
+                img.put_pixel(x, y, grid_color);
+            }
+        }
+        // Frequency label
+        let freq = center_freq - sample_rate / 2.0 + sample_rate * i as f64 / 4.0;
+        let label = format!("{:.1}", freq / 1e6);
+        draw_text(&mut img, x.saturating_sub(10), height - margin_bottom + 5, &label, text_color);
+    }
+
+    // Draw spectrum trace
+    for px in 0..plot_w {
+        let bin = (px as f64 / plot_w as f64 * n as f64) as usize;
+        let bin = bin.min(n - 1);
+        let db = spectrum_db[bin];
+        let normalized = ((db - db_floor) / effective_range).clamp(0.0, 1.0);
+        let y = margin_top + ((1.0 - normalized) * plot_h as f32) as u32;
+        let x = margin_left + px;
+
+        // Fill below trace with dim color
+        for fill_y in y..margin_top + plot_h {
+            if x < img.width() && fill_y < img.height() {
+                let fill_color = Rgb([0, 40, 50]);
+                img.put_pixel(x, fill_y, fill_color);
+            }
+        }
+
+        // Bright trace line
+        if x < img.width() && y < img.height() {
+            img.put_pixel(x, y, trace_color);
+            if y + 1 < img.height() {
+                img.put_pixel(x, y + 1, trace_color);
+            }
+        }
+    }
+
+    img.save(path).map_err(|e| format!("PNG save error: {e}"))?;
+    Ok(path.display().to_string())
+}
+
+fn export_waterfall_png(
+    path: &PathBuf,
+    rows: &[Vec<f32>],
+    _sample_rate: f64,
+    _center_freq: f64,
+) -> Result<String, String> {
+    if rows.is_empty() {
+        return Err("Empty waterfall data".to_string());
+    }
+
+    let bins = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if bins == 0 {
+        return Err("Empty waterfall bins".to_string());
+    }
+
+    let width = bins.min(2048) as u32;
+    let height = rows.len().min(1024) as u32;
+
+    // Compute global dB range across all rows
+    let mut min_db = f32::INFINITY;
+    let mut max_db = f32::NEG_INFINITY;
+    for row in rows {
+        for &db in row {
+            if db.is_finite() {
+                min_db = min_db.min(db);
+                max_db = max_db.max(db);
+            }
+        }
+    }
+    if !min_db.is_finite() {
+        min_db = -100.0;
+    }
+    if !max_db.is_finite() {
+        max_db = 0.0;
+    }
+
+    let mut img = RgbImage::new(width, height);
+
+    for (row_idx, row) in rows.iter().enumerate().take(height as usize) {
+        for px in 0..width {
+            let bin = (px as f64 / width as f64 * bins as f64) as usize;
+            let db = row.get(bin).copied().unwrap_or(min_db);
+            let color = db_to_color(db, min_db, max_db);
+            img.put_pixel(px, row_idx as u32, color);
+        }
+    }
+
+    img.save(path).map_err(|e| format!("PNG save error: {e}"))?;
+    Ok(path.display().to_string())
+}
+
 fn export_json(path: &PathBuf, content: &ExportContent) -> Result<String, String> {
     let json = match content {
         ExportContent::Spectrum { spectrum_db, sample_rate, center_freq } => {
@@ -369,6 +630,15 @@ fn export_json(path: &PathBuf, content: &ExportContent) -> Result<String, String
             serde_json::json!({
                 "center_freq_hz": center_freq,
                 "detections": detections,
+            })
+        }
+        ExportContent::Waterfall { rows, sample_rate, center_freq } => {
+            serde_json::json!({
+                "type": "waterfall",
+                "center_freq_hz": center_freq,
+                "sample_rate": sample_rate,
+                "rows": rows.len(),
+                "bins": rows.first().map(|r| r.len()).unwrap_or(0),
             })
         }
     };
@@ -486,6 +756,66 @@ mod tests {
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.starts_with("frequency_hz,power_dbfs\n"));
         cleanup(&path);
+    }
+
+    #[test]
+    fn png_spectrum_export() {
+        let path = temp_path("test_spectrum.png");
+        let spectrum: Vec<f32> = (0..2048).map(|i| -80.0 + 40.0 * (i as f32 * 0.01).sin()).collect();
+        let result = export_to_file(&ExportConfig {
+            path: path.clone(),
+            format: ExportFormat::Png,
+            content: ExportContent::Spectrum {
+                spectrum_db: spectrum,
+                sample_rate: 2.048e6,
+                center_freq: 100e6,
+            },
+        });
+        assert!(result.is_ok());
+        // Verify it's a valid PNG
+        let data = std::fs::read(&path).unwrap();
+        assert_eq!(&data[..4], &[0x89, b'P', b'N', b'G']);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn png_waterfall_export() {
+        let path = temp_path("test_waterfall.png");
+        let rows: Vec<Vec<f32>> = (0..50)
+            .map(|r| {
+                (0..256)
+                    .map(|i| -80.0 + 30.0 * ((i as f32 + r as f32) * 0.05).sin())
+                    .collect()
+            })
+            .collect();
+        let result = export_to_file(&ExportConfig {
+            path: path.clone(),
+            format: ExportFormat::Png,
+            content: ExportContent::Waterfall {
+                rows,
+                sample_rate: 2.048e6,
+                center_freq: 100e6,
+            },
+        });
+        assert!(result.is_ok());
+        let data = std::fs::read(&path).unwrap();
+        assert_eq!(&data[..4], &[0x89, b'P', b'N', b'G']);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn png_empty_spectrum_returns_error() {
+        let path = temp_path("test_empty.png");
+        let result = export_to_file(&ExportConfig {
+            path: path.clone(),
+            format: ExportFormat::Png,
+            content: ExportContent::Spectrum {
+                spectrum_db: Vec::new(),
+                sample_rate: 2.048e6,
+                center_freq: 100e6,
+            },
+        });
+        assert!(result.is_err());
     }
 
     #[test]

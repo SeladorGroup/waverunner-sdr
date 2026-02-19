@@ -58,6 +58,7 @@ pub enum Action {
     VolumeMute,
     SaveBookmark,
     IdentifySignal,
+    ExportPng,
 }
 
 /// Parse a frequency string entered by the user.
@@ -151,6 +152,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 KeyCode::Char('\\') => Action::VolumeMute,
                 KeyCode::Char('B') => Action::SaveBookmark,
                 KeyCode::Char('i') => Action::IdentifySignal,
+                KeyCode::Char('X') => Action::ExportPng,
                 _ => Action::None,
             }
         }

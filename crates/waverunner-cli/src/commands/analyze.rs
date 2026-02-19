@@ -52,7 +52,7 @@ pub enum AnalyzeAction {
         /// Output file path
         #[arg(short, long)]
         output: String,
-        /// Format: csv or json
+        /// Format: csv, json, or png
         #[arg(short, long, default_value = "csv")]
         format: String,
     },
@@ -113,6 +113,7 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
         AnalyzeAction::Export { output, format } => {
             let fmt = match format.as_str() {
                 "json" => analysis::export::ExportFormat::Json,
+                "png" => analysis::export::ExportFormat::Png,
                 _ => analysis::export::ExportFormat::Csv,
             };
             analysis::AnalysisRequest::Export(analysis::export::ExportConfig {
