@@ -41,6 +41,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::dsp::decoder::{DecoderPlugin, DecoderRequirements};
+use crate::dsp::decoders::util;
 use crate::session::DecodedMessage;
 use crate::types::Sample;
 
@@ -213,8 +214,8 @@ pub struct RdsDecoder {
     pi_code: Option<u16>,
     /// PTY code.
     pty: Option<u8>,
-    /// Previous I/Q for carrier tracking.
-    prev_iq: Sample,
+    /// Previous IQ sample for FM discriminator.
+    prev_sample: Sample,
     /// Lowpass state for I channel after mixing.
     lpf_i: f64,
     /// Lowpass state for Q channel after mixing.
@@ -249,7 +250,7 @@ impl RdsDecoder {
             rt_ab_flag: None,
             pi_code: None,
             pty: None,
-            prev_iq: Sample::new(0.0, 0.0),
+            prev_sample: Sample::new(0.0, 0.0),
             lpf_i: 0.0,
             lpf_q: 0.0,
             lpf_alpha,
@@ -467,7 +468,7 @@ impl DecoderPlugin for RdsDecoder {
             center_frequency: 0.0, // RDS is embedded in FM — no specific center freq
             sample_rate: self.sample_rate,
             bandwidth: 4000.0, // ±2 kHz around 57 kHz subcarrier
-            wants_iq: false, // Wants demodulated FM baseband (real audio)
+            wants_iq: true, // Receives raw IQ, applies own FM discriminator
         }
     }
 
@@ -475,11 +476,10 @@ impl DecoderPlugin for RdsDecoder {
         let mut messages = Vec::new();
 
         for &sample in samples {
-            // The input is complex IQ baseband. Use the real part as FM
-            // demodulated baseband (which should contain 57 kHz subcarrier).
-            // In a full system, the SessionManager would feed FM-demodulated
-            // audio. Here we do a simple magnitude-based extraction.
-            let x = sample.re as f64;
+            // Apply FM discriminator to extract baseband from raw IQ.
+            // The FM-demodulated signal contains the 57 kHz RDS subcarrier.
+            let x = util::fm_discriminate(sample, self.prev_sample) as f64;
+            self.prev_sample = sample;
 
             // Mix with 57 kHz NCO to bring RDS subcarrier to baseband
             let nco_i = self.nco_phase.cos();
@@ -547,7 +547,7 @@ impl DecoderPlugin for RdsDecoder {
         self.rt_ab_flag = None;
         self.pi_code = None;
         self.pty = None;
-        self.prev_iq = Sample::new(0.0, 0.0);
+        self.prev_sample = Sample::new(0.0, 0.0);
         self.lpf_i = 0.0;
         self.lpf_q = 0.0;
     }
@@ -627,7 +627,7 @@ mod tests {
         // Build 4 groups, each with PS segment
         let ps_chars = [b'T', b'E', b'S', b'T', b' ', b'F', b'M', b' '];
 
-        let mut decoder = RdsDecoder::new(228000.0);
+        let mut decoder = RdsDecoder::new(2_048_000.0);
         let mut messages = Vec::new();
 
         for segment in 0..4u16 {
@@ -677,7 +677,7 @@ mod tests {
 
         let rt_text = b"Hello World                                                     ";
 
-        let mut decoder = RdsDecoder::new(228000.0);
+        let mut decoder = RdsDecoder::new(2_048_000.0);
         let mut messages = Vec::new();
 
         // First send a type 0A group to establish sync
@@ -747,22 +747,22 @@ mod tests {
 
     #[test]
     fn decoder_plugin_interface() {
-        let decoder = RdsDecoder::new(228000.0);
+        let decoder = RdsDecoder::new(2_048_000.0);
         assert_eq!(decoder.name(), "rds");
-        assert!(!decoder.requirements().wants_iq); // Wants demod audio
-        assert!((decoder.requirements().sample_rate - 228000.0).abs() < 1.0);
+        assert!(decoder.requirements().wants_iq); // Receives raw IQ, applies FM discriminator
+        assert!((decoder.requirements().sample_rate - 2_048_000.0).abs() < 1.0);
     }
 
     #[test]
     fn decoder_handles_empty_input() {
-        let mut decoder = RdsDecoder::new(228000.0);
+        let mut decoder = RdsDecoder::new(2_048_000.0);
         let msgs = decoder.process(&[]);
         assert!(msgs.is_empty());
     }
 
     #[test]
     fn decoder_reset_clears_state() {
-        let mut decoder = RdsDecoder::new(228000.0);
+        let mut decoder = RdsDecoder::new(2_048_000.0);
         decoder.ps_name = *b"TEST FM ";
         decoder.pi_code = Some(0x1234);
         decoder.reset();

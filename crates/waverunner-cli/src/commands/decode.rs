@@ -130,9 +130,9 @@ fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
         }),
         DecodeProtocol::Rds(args) => Some(ProtocolConfig {
             decoder_name: "rds".to_string(),
-            // RDS 57 kHz subcarrier needs ≥114 kHz sample rate.
-            // 228 kHz is 4× oversampling of the subcarrier.
-            default_sample_rate: 228_000.0,
+            // RDS needs raw IQ with FM discriminator, at a rate high enough
+            // for the 57 kHz subcarrier. 2.048 MS/s is standard RTL-SDR rate.
+            default_sample_rate: 2_048_000.0,
             frequency: args.frequency,
             description: "RDS/RBDS".to_string(),
         }),

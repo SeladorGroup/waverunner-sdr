@@ -67,7 +67,7 @@ pub fn register_all(registry: &mut DecoderRegistry) {
         Box::new(adsb::AdsbDecoder::new())
     });
     registry.register("rds", || {
-        Box::new(rds::RdsDecoder::new(228000.0))
+        Box::new(rds::RdsDecoder::new(2_048_000.0))
     });
 
     // ---- Phase 6 decoders ----
