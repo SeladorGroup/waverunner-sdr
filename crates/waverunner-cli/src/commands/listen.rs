@@ -102,7 +102,7 @@ pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
     let config = SessionConfig {
         schema_version: 1,
         device_index,
-        frequency: frequency,
+        frequency,
         sample_rate,
         gain: gain_mode,
         ppm: 0,

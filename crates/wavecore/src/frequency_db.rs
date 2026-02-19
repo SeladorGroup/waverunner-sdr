@@ -164,6 +164,7 @@ pub struct FrequencyAllocation {
 }
 
 /// Regional frequency database.
+#[derive(Clone)]
 pub struct FrequencyDb {
     /// Active region for filtering.
     pub region: Region,

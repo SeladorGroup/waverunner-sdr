@@ -59,6 +59,10 @@ pub struct GeneralScanArgs {
     #[arg(long)]
     pub no_decode: bool,
 
+    /// Enable audio demod on parked signals (police scanner mode)
+    #[arg(long)]
+    pub listen: bool,
+
     /// Sample rate in S/s
     #[arg(short = 'r', long, default_value = "2048000", value_parser = parse_frequency)]
     pub sample_rate: f64,
@@ -142,16 +146,24 @@ async fn run_general(args: GeneralScanArgs, device_index: u32) -> Result<()> {
         park_duration_secs: args.park_secs,
         auto_decode: !args.no_decode,
         sample_rate: args.sample_rate,
+        enable_audio: args.listen,
+        audio_mode: None,
     };
 
-    let mode = GeneralMode::new(scan_config);
+    let mode = if args.listen {
+        let freq_db = wavecore::frequency_db::FrequencyDb::auto_detect();
+        GeneralMode::with_freq_db(scan_config, std::sync::Arc::new(freq_db))
+    } else {
+        GeneralMode::new(scan_config)
+    };
     let init_cmds = mode_ctrl.activate(Box::new(mode));
     for cmd in init_cmds {
         session.send(cmd).ok();
     }
 
+    let listen_label = if args.listen { " | Audio: ON" } else { "" };
     println!(
-        "General scan: {:.3} MHz - {:.3} MHz | SNR threshold: {:.0} dB",
+        "General scan: {:.3} MHz - {:.3} MHz | SNR threshold: {:.0} dB{listen_label}",
         args.start / 1e6,
         args.end / 1e6,
         args.min_snr,

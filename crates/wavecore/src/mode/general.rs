@@ -13,8 +13,11 @@
 
 use std::time::Instant;
 
+use std::sync::Arc;
+
 use crate::dsp::detection::Detection;
-use crate::session::{Command, Event};
+use crate::frequency_db::FrequencyDb;
+use crate::session::{Command, DemodConfig, Event};
 
 use super::Mode;
 use super::classifier::{RuleClassifier, SignalClass};
@@ -38,6 +41,10 @@ pub struct GeneralModeConfig {
     pub auto_decode: bool,
     /// Sample rate for computing default step size. Default: 2_048_000.0.
     pub sample_rate: f64,
+    /// Whether to start audio demod when parked on a signal. Default: false.
+    pub enable_audio: bool,
+    /// Override demod mode for audio (None = auto-detect from frequency database).
+    pub audio_mode: Option<String>,
 }
 
 impl Default for GeneralModeConfig {
@@ -51,6 +58,8 @@ impl Default for GeneralModeConfig {
             park_duration_secs: 30,
             auto_decode: true,
             sample_rate: 2_048_000.0,
+            enable_audio: false,
+            audio_mode: None,
         }
     }
 }
@@ -77,6 +86,7 @@ enum ScanState {
         park_start: Instant,
         _snr: f32,
         decoder: Option<String>,
+        demod_active: bool,
         no_signal_blocks: u32,
     },
 }
@@ -88,6 +98,7 @@ pub struct GeneralMode {
     classifier: RuleClassifier,
     step: f64,
     classification_label: Option<String>,
+    freq_db: Option<Arc<FrequencyDb>>,
 }
 
 impl GeneralMode {
@@ -101,8 +112,38 @@ impl GeneralMode {
             classifier: RuleClassifier::new(),
             step,
             classification_label: None,
+            freq_db: None,
             config,
         }
+    }
+
+    /// Create with a frequency database for auto-detecting demod modes.
+    pub fn with_freq_db(config: GeneralModeConfig, freq_db: Arc<FrequencyDb>) -> Self {
+        let step = config.effective_step();
+        Self {
+            state: ScanState::Scanning {
+                current_freq: config.scan_start,
+                step_start: Instant::now(),
+            },
+            classifier: RuleClassifier::new(),
+            step,
+            classification_label: None,
+            freq_db: Some(freq_db),
+            config,
+        }
+    }
+
+    /// Determine the demod mode for a frequency when audio is enabled.
+    fn demod_mode_for_freq(&self, freq: f64) -> String {
+        if let Some(ref mode) = self.config.audio_mode {
+            return mode.clone();
+        }
+        if let Some(ref db) = self.freq_db {
+            if let Some(mode) = db.demod_mode(freq) {
+                return mode.to_string();
+            }
+        }
+        "fm".to_string() // fallback
     }
 
     /// Find the strongest detection above min_snr.
@@ -185,11 +226,29 @@ impl Mode for GeneralMode {
                                 }
                             };
 
+                            // Start audio demod if enabled
+                            let demod_active = if self.config.enable_audio {
+                                let mode = self.demod_mode_for_freq(signal_freq);
+                                cmds.push(Command::StartDemod(DemodConfig {
+                                    mode,
+                                    audio_rate: 48000,
+                                    bandwidth: None,
+                                    bfo: None,
+                                    squelch: None,
+                                    deemph_us: None,
+                                    output_wav: None,
+                                }));
+                                true
+                            } else {
+                                false
+                            };
+
                             self.state = ScanState::Parked {
                                 freq: signal_freq,
                                 park_start: Instant::now(),
                                 _snr: det.snr_db,
                                 decoder,
+                                demod_active,
                                 no_signal_blocks: 0,
                             };
 
@@ -218,14 +277,17 @@ impl Mode for GeneralMode {
                         // Signal lost after 10 blocks
                         if *no_signal_blocks >= 10 {
                             let parked_freq = *freq;
-                            // Take ownership of decoder before reassigning state
-                            let old_decoder = if let ScanState::Parked { ref mut decoder, .. } = self.state {
-                                decoder.take()
+                            // Take ownership of decoder/demod state before reassigning
+                            let (old_decoder, was_demod) = if let ScanState::Parked { ref mut decoder, demod_active, .. } = self.state {
+                                (decoder.take(), demod_active)
                             } else {
-                                None
+                                (None, false)
                             };
                             let next = self.next_freq(parked_freq);
                             let mut cmds = Vec::new();
+                            if was_demod {
+                                cmds.push(Command::StopDemod);
+                            }
                             if let Some(dec) = old_decoder {
                                 cmds.push(Command::DisableDecoder(dec));
                             }
@@ -282,6 +344,7 @@ impl Mode for GeneralMode {
                 freq,
                 park_start,
                 decoder,
+                demod_active,
                 ..
             } => {
                 // Check park timeout (0 = indefinite)
@@ -290,6 +353,9 @@ impl Mode for GeneralMode {
                 {
                     let mut cmds = Vec::new();
                     let next = self.next_freq(*freq);
+                    if *demod_active {
+                        cmds.push(Command::StopDemod);
+                    }
                     if let Some(dec) = decoder {
                         cmds.push(Command::DisableDecoder(dec.clone()));
                     }
@@ -330,6 +396,8 @@ mod tests {
             park_duration_secs: 30,
             auto_decode: true,
             sample_rate: 2_048_000.0,
+            enable_audio: false,
+            audio_mode: None,
         }
     }
 
@@ -490,5 +558,83 @@ mod tests {
         let mut mode = GeneralMode::new(test_config());
         let cmds = mode.handle_event(&Event::Detections(vec![]));
         assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn audio_enabled_emits_start_demod_on_park() {
+        let mut config = test_config();
+        config.enable_audio = true;
+        config.audio_mode = Some("wfm".to_string());
+        let mut mode = GeneralMode::new(config);
+
+        let det = make_detection(0.0, 15.0);
+        let cmds = mode.handle_event(&Event::Detections(vec![det]));
+
+        let has_start_demod = cmds.iter().any(|c| matches!(c, Command::StartDemod(_)));
+        assert!(has_start_demod, "Expected StartDemod when enable_audio is true");
+    }
+
+    #[test]
+    fn audio_disabled_no_demod() {
+        let mut config = test_config();
+        config.enable_audio = false;
+        let mut mode = GeneralMode::new(config);
+
+        let det = make_detection(0.0, 15.0);
+        let cmds = mode.handle_event(&Event::Detections(vec![det]));
+
+        let has_start_demod = cmds.iter().any(|c| matches!(c, Command::StartDemod(_)));
+        assert!(!has_start_demod, "Should not emit StartDemod when enable_audio is false");
+    }
+
+    #[test]
+    fn leave_park_stops_demod() {
+        let mut config = test_config();
+        config.enable_audio = true;
+        config.audio_mode = Some("fm".to_string());
+        let mut mode = GeneralMode::new(config);
+
+        // Park on a signal
+        let det = make_detection(0.0, 15.0);
+        mode.handle_event(&Event::Detections(vec![det]));
+        assert!(mode.status().contains("Parked"));
+
+        // Signal loss: 10 blocks with no detections
+        let mut final_cmds = Vec::new();
+        for _ in 0..10 {
+            let cmds = mode.handle_event(&Event::Detections(vec![]));
+            if !cmds.is_empty() {
+                final_cmds = cmds;
+                break;
+            }
+        }
+
+        let has_stop_demod = final_cmds.iter().any(|c| matches!(c, Command::StopDemod));
+        assert!(has_stop_demod, "Expected StopDemod when leaving park with audio active");
+    }
+
+    #[test]
+    fn park_timeout_stops_demod() {
+        let mut config = test_config();
+        config.enable_audio = true;
+        config.audio_mode = Some("fm".to_string());
+        config.park_duration_secs = 0; // We'll test with immediate park via direct state manipulation
+
+        // Use a very short park duration so the test doesn't have to wait
+        config.park_duration_secs = 1;
+        let mut mode = GeneralMode::new(config);
+
+        // Park on a signal
+        let det = make_detection(0.0, 15.0);
+        mode.handle_event(&Event::Detections(vec![det]));
+        assert!(mode.status().contains("Parked"));
+
+        // Wait for park timeout
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let cmds = mode.tick();
+
+        let has_stop_demod = cmds.iter().any(|c| matches!(c, Command::StopDemod));
+        assert!(has_stop_demod, "Expected StopDemod on park timeout with audio active");
+        assert!(cmds.iter().any(|c| matches!(c, Command::Tune(_))), "Expected Tune after timeout");
     }
 }

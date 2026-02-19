@@ -610,6 +610,7 @@ impl App {
     }
 
     /// Toggle general scan mode on/off using the visible spectrum range.
+    /// If a demod mode is active, scanning will play audio on parked signals.
     pub fn toggle_general_scan(&mut self) -> Vec<wavecore::session::Command> {
         if self.mode_controller.active_mode() == Some("general") {
             let cmds = self.mode_controller.deactivate();
@@ -617,12 +618,22 @@ impl App {
             cmds
         } else {
             let mut cmds = self.mode_controller.deactivate();
+            let has_demod = self.demod_mode != DemodMode::Off;
             let config = wavecore::mode::general::GeneralModeConfig {
                 scan_start: self.frequency - self.sample_rate / 2.0,
                 scan_end: self.frequency + self.sample_rate / 2.0,
+                enable_audio: has_demod,
+                audio_mode: self.demod_mode.session_mode().map(|s| s.to_string()),
                 ..Default::default()
             };
-            let mode = wavecore::mode::general::GeneralMode::new(config);
+            let mode = if has_demod {
+                wavecore::mode::general::GeneralMode::with_freq_db(
+                    config,
+                    std::sync::Arc::new(self.frequency_db.clone()),
+                )
+            } else {
+                wavecore::mode::general::GeneralMode::new(config)
+            };
             cmds.extend(self.mode_controller.activate(Box::new(mode)));
             self.mode_status = self.mode_controller.mode_status();
             cmds

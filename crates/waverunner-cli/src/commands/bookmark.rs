@@ -65,10 +65,11 @@ pub fn run(args: BookmarkArgs) -> Result<()> {
                 println!("No bookmarks saved.");
                 println!("Add one: waverunner bookmark add \"name\" <frequency>");
             } else {
-                println!(
-                    "{:<20} {:>16}  {:<8} {:<10} {}",
-                    "Name", "Frequency", "Mode", "Decoder", "Notes"
+                let header = format!(
+                    "{:<20} {:>16}  {:<8} {:<10} Notes",
+                    "Name", "Frequency", "Mode", "Decoder"
                 );
+                println!("{header}");
                 println!("{}", "-".repeat(70));
                 for bm in bookmarks {
                     let freq = wavecore::util::format_freq(bm.frequency_hz);
