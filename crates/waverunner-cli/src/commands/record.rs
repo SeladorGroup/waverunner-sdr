@@ -46,6 +46,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
+        schema_version: 1,
         device_index,
         frequency: args.frequency,
         sample_rate: args.sample_rate,
@@ -144,6 +145,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     // Write metadata sidecar
     let timestamp = chrono_lite_timestamp();
     let metadata = RecordingMetadata {
+        schema_version: 1,
         center_freq: args.frequency,
         sample_rate: args.sample_rate,
         gain: args.gain.clone(),

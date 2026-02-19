@@ -111,6 +111,29 @@ impl ReplayDevice {
             )));
         }
 
+        // Validate file size for raw formats (minimum one complete sample)
+        if format == IqFormat::Cf32Le {
+            let meta = std::fs::metadata(path).map_err(|e| {
+                HardwareError::DriverError(format!("Cannot read file metadata: {e}"))
+            })?;
+            if meta.len() < 8 {
+                return Err(HardwareError::StreamError(format!(
+                    "File too small for cf32 format ({} bytes, need at least 8)",
+                    meta.len()
+                )));
+            }
+        } else if format == IqFormat::Cu8 {
+            let meta = std::fs::metadata(path).map_err(|e| {
+                HardwareError::DriverError(format!("Cannot read file metadata: {e}"))
+            })?;
+            if meta.len() < 2 {
+                return Err(HardwareError::StreamError(format!(
+                    "File too small for cu8 format ({} bytes, need at least 2)",
+                    meta.len()
+                )));
+            }
+        }
+
         // For WAV files, validate the header up front
         if format == IqFormat::WavF32 {
             let reader = hound::WavReader::open(path).map_err(|e| {

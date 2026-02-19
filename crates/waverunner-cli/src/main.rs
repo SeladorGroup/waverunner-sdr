@@ -21,6 +21,10 @@ struct Cli {
     /// SDR device index
     #[arg(short, long, default_value = "0", global = true)]
     device: u32,
+
+    /// Output logs as structured JSON
+    #[arg(long, global = true)]
+    json_log: bool,
 }
 
 #[tokio::main]
@@ -34,11 +38,19 @@ async fn main() -> Result<()> {
         _ => "trace",
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)),
-        )
-        .init();
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
+
+    if cli.json_log {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .json()
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .init();
+    }
 
     commands::execute(cli.command, cli.device).await
 }

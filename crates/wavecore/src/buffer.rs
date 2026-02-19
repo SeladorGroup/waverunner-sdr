@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use tracing::warn;
@@ -17,7 +18,7 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            buffer_depth: 64,
+            buffer_depth: 256,
             drop_on_overflow: true,
         }
     }
@@ -27,7 +28,7 @@ impl Default for PipelineConfig {
 pub struct SampleProducer {
     tx: Sender<SampleBlock>,
     drop_on_overflow: bool,
-    dropped_count: AtomicU64,
+    dropped_count: Arc<AtomicU64>,
 }
 
 impl SampleProducer {
@@ -59,6 +60,11 @@ impl SampleProducer {
     /// Number of sample blocks dropped due to overflow.
     pub fn dropped_count(&self) -> u64 {
         self.dropped_count.load(Ordering::Relaxed)
+    }
+
+    /// Get a shared handle to the drop counter for use in other threads.
+    pub fn dropped_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.dropped_count)
     }
 }
 
@@ -103,7 +109,7 @@ pub fn sample_pipeline(config: PipelineConfig) -> (SampleProducer, SampleConsume
         SampleProducer {
             tx,
             drop_on_overflow: config.drop_on_overflow,
-            dropped_count: AtomicU64::new(0),
+            dropped_count: Arc::new(AtomicU64::new(0)),
         },
         SampleConsumer { rx },
     )
@@ -165,7 +171,10 @@ mod tests {
 
     #[test]
     fn pipeline_threaded() {
-        let (producer, consumer) = sample_pipeline(PipelineConfig::default());
+        let (producer, consumer) = sample_pipeline(PipelineConfig {
+            buffer_depth: 128,
+            drop_on_overflow: true,
+        });
         let handle = std::thread::spawn(move || {
             for i in 0..100 {
                 producer.send(make_block(i)).unwrap();

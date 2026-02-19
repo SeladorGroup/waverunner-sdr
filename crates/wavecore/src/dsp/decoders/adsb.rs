@@ -876,7 +876,7 @@ mod tests {
         assert_eq!(nl(10.0), 59);
         // NL(52°) should be ~37
         let nl_52 = nl(52.0);
-        assert!(nl_52 >= 35 && nl_52 <= 39, "NL(52°) = {}", nl_52);
+        assert!((35..=39).contains(&nl_52), "NL(52°) = {}", nl_52);
     }
 
     #[test]
@@ -941,12 +941,12 @@ mod tests {
         // Character set: index 0=?, 1=A, ..., 26=Z, 32=space, 48=0, ..., 57=9
         // 'U'=21, 'A'=1, 'L'=12, '1'=49, '2'=50, '3'=51, ' '=32, ' '=32
         let encoded = [
-            (21 << 2) | (1 >> 4),          // U(5:0)A(5:4) = 0x54 | 0x00 = 0x54
+            (21 << 2),                     // U(5:0)A(5:4) = 0x54 | 0x00 = 0x54
             ((1 & 0xF) << 4) | (12 >> 2),  // A(3:0)L(5:2) = 0x10 | 0x03 = 0x13
-            ((12 & 0x3) << 6) | 49,        // L(1:0)'1' = 0x80 | 0x31 = 0xB1
+            49,                            // L(1:0)'1' = 0x80 | 0x31 = 0xB1 (12 & 0x3 = 0)
             (50 << 2) | (51 >> 4),         // '2''3'(5:4) = 0xC8 | 0x03 = 0xCB
             ((51 & 0xF) << 4) | (32 >> 2), // '3'(3:0)' '(5:2) = 0x30 | 0x08 = 0x38
-            ((32 & 0x3) << 6) | 32,        // ' '(1:0)' ' = 0x00 | 0x20 = 0x20
+            32,                            // ' '(1:0)' ' = 0x00 | 0x20 = 0x20 (32 & 0x3 = 0)
         ];
         let callsign = decode_callsign(&encoded);
         assert_eq!(callsign, "UAL123");
@@ -965,12 +965,12 @@ mod tests {
         let mut me = [0u8; 7];
         me[0] = (19 << 3) | 1; // TC=19, subtype=1
 
-        // EW: sign=0 (east), value=101 (100+1)
-        me[1] = (0 << 2) | ((101 >> 8) & 0x03) as u8;
+        // EW: sign=0 (east), value=101 (100+1); high bits are 0
+        me[1] = 0;
         me[2] = (101 & 0xFF) as u8;
 
         // NS: sign=0 (north), value=201 (200+1)
-        me[3] = (0 << 7) | ((201 >> 3) & 0x7F) as u8;
+        me[3] = ((201 >> 3) & 0x7F) as u8;
         me[4] = ((201 & 0x07) << 5) as u8;
 
         let vel = decode_velocity(&me);
@@ -1049,7 +1049,7 @@ mod tests {
         msg[3] = 0xEF; // ICAO low
 
         // ME: TC=1, cat=0, callsign "TEST"
-        msg[4] = (1 << 3) | 0; // TC=1, category=0
+        msg[4] = 1 << 3; // TC=1, category=0
 
         // Encode callsign "TEST    " in 6-bit
         let chars = [20u8, 5, 19, 20, 32, 32, 32, 32]; // T E S T sp sp sp sp
@@ -1093,9 +1093,9 @@ mod tests {
         }
 
         // Data bits: 112 bits, each bit = 2 samples
-        for byte_idx in 0..14 {
+        for byte in &msg {
             for bit_idx in (0..8).rev() {
-                let bit = (msg[byte_idx] >> bit_idx) & 1;
+                let bit = (byte >> bit_idx) & 1;
                 if bit == 1 {
                     iq.push(Sample::new(1.0, 0.0)); // high
                     iq.push(Sample::new(0.0, 0.0)); // low

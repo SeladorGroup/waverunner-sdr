@@ -452,7 +452,7 @@ pub fn zpk_to_sos(zpk: &Zpk) -> (Vec<Biquad>, f64) {
         let idx = remaining_poles
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.norm().partial_cmp(&b.norm()).unwrap())
+            .max_by(|(_, a), (_, b)| a.norm().partial_cmp(&b.norm()).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap();
 
@@ -465,7 +465,7 @@ pub fn zpk_to_sos(zpk: &Zpk) -> (Vec<Biquad>, f64) {
             .min_by(|(_, a), (_, b)| {
                 let da = (**a - pole.conj()).norm();
                 let db = (**b - pole.conj()).norm();
-                da.partial_cmp(&db).unwrap()
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(i, _)| i)
             .unwrap();
@@ -480,7 +480,7 @@ pub fn zpk_to_sos(zpk: &Zpk) -> (Vec<Biquad>, f64) {
                 .min_by(|(_, a), (_, b)| {
                     let da = (**a - pole).norm();
                     let db = (**b - pole).norm();
-                    da.partial_cmp(&db).unwrap()
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .map(|(i, _)| i)
                 .unwrap();
@@ -492,7 +492,7 @@ pub fn zpk_to_sos(zpk: &Zpk) -> (Vec<Biquad>, f64) {
                 .min_by(|(_, a), (_, b)| {
                     let da = (**a - z1.conj()).norm();
                     let db = (**b - z1.conj()).norm();
-                    da.partial_cmp(&db).unwrap()
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .map(|(i, _)| i)
                 .unwrap();

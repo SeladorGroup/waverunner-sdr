@@ -1,0 +1,10 @@
+name = "pager"
+description = "POCSAG pager monitoring at 929.6125 MHz"
+sample_rate = 2048000.0
+decoders = ["pocsag"]
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 929612500.0
+label = "POCSAG 929.6125 MHz"
+monitor = true

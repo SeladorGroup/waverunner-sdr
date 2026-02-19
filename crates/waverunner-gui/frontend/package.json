@@ -1,0 +1,20 @@
+{
+  "name": "waverunner-gui-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 1420",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "svelte": "^5",
+    "@sveltejs/vite-plugin-svelte": "^5",
+    "vite": "^6",
+    "typescript": "^5"
+  }
+}

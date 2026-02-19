@@ -859,7 +859,7 @@ mod tests {
 
         // Should produce approximately one symbol per bit period
         assert!(
-            symbol_count >= 8 && symbol_count <= 12,
+            (8..=12).contains(&symbol_count),
             "Expected ~10 symbols, got {symbol_count}"
         );
     }

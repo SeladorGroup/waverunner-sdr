@@ -6,6 +6,7 @@ members = [
     "crates/waveviz",
     "crates/waverunner-cli",
     "crates/waverunner-tui",
+    "crates/waverunner-gui",
 ]
 
 [workspace.package]
@@ -16,7 +17,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # Core types
-num-complex = "0.4"
+num-complex = { version = "0.4", features = ["serde"] }
 rustfft = "6.2"
 
 # Hardware
@@ -28,7 +29,7 @@ anyhow = "1.0"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -43,6 +44,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "syn
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 
 # Audio/Recording
 hound = "3.5"
@@ -55,6 +57,10 @@ crossterm = "0.28"
 # GPU visualization
 wgpu = "24"
 bytemuck = { version = "1", features = ["derive"] }
+
+# Tauri
+tauri = { version = "2", features = ["devtools"] }
+tauri-build = { version = "2", features = [] }
 
 # Internal crates
 wavecore = { path = "crates/wavecore" }

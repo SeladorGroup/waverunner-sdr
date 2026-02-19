@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
 
 use wavecore::util::{format_freq, format_step};
 
@@ -24,6 +24,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ViewTab::Standard => draw_standard_tab(frame, app),
         ViewTab::Constellation => draw_constellation_tab(frame, app),
         ViewTab::Statistics => draw_statistics_tab(frame, app),
+        ViewTab::Analysis => draw_analysis_tab(frame, app),
     }
 }
 
@@ -145,6 +146,20 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("Gain: {gain_str}"), Style::default().fg(Color::White)),
     ];
 
+    // Volume indicator (show when demod is active)
+    if app.demod_mode != crate::app::DemodMode::Off {
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        let vol_color = if app.volume == 0 {
+            Color::Red
+        } else {
+            Color::Green
+        };
+        spans.push(Span::styled(
+            format!("Vol: {}%", app.volume),
+            Style::default().fg(vol_color),
+        ));
+    }
+
     if let Some(sq) = app.squelch {
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
@@ -162,11 +177,32 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
 
+    // Show active mode
+    if let Some(ref status) = app.mode_status {
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            status.clone(),
+            Style::default().fg(Color::LightYellow),
+        ));
+    }
+
     // Tab indicator
     spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
     spans.push(Span::styled(
         format!("[{}]", app.view_tab.label()),
         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    ));
+
+    // Health badge
+    let (health_label, health_color) = match app.health {
+        wavecore::session::HealthStatus::Normal => ("[OK]", Color::Green),
+        wavecore::session::HealthStatus::Warning => ("[WARN]", Color::Yellow),
+        wavecore::session::HealthStatus::Critical => ("[CRIT]", Color::Red),
+    };
+    spans.push(Span::styled(" ", Style::default()));
+    spans.push(Span::styled(
+        health_label,
+        Style::default().fg(health_color).add_modifier(Modifier::BOLD),
     ));
 
     // Show frequency entry if active
@@ -500,6 +536,54 @@ fn draw_detailed_stats(frame: &mut Frame, app: &App, dsp: &DspState, area: Rect)
         ]));
     }
 
+    // Latency breakdown
+    if app.latency.total_us > 0 {
+        lines.push(Line::from(Span::styled(
+            " ── Latency ──",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("       DC: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} us", app.latency.dc_removal_us), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("      FFT: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} us", app.latency.fft_us), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("     CFAR: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} us", app.latency.cfar_us), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    Demod: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} us", app.latency.demod_us), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    Total: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{} us", app.latency.total_us),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    // Buffer / events info
+    if app.buffer_occupancy > 0 || app.events_dropped > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("   Buffer: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}", app.buffer_occupancy), Style::default().fg(Color::White)),
+            Span::styled("  EvDrop: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", app.events_dropped),
+                if app.events_dropped > 0 {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::White)
+                },
+            ),
+        ]));
+    }
+
     // Noise classification hint
     let noise_type = if dsp.stats.excess_kurtosis.abs() < 0.5 {
         "Gaussian"
@@ -731,9 +815,9 @@ fn draw_decoded(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(para, area);
 }
 
-/// Keybinding help bar.
-fn draw_keybindings(frame: &mut Frame, _app: &App, area: Rect) {
-    let spans = vec![
+/// Keybinding help bar — context-sensitive to the current tab.
+fn draw_keybindings(frame: &mut Frame, app: &App, area: Rect) {
+    let mut spans = vec![
         Span::styled(" [q]", Style::default().fg(Color::Yellow)),
         Span::styled("uit ", Style::default().fg(Color::DarkGray)),
         Span::styled("[j/k]", Style::default().fg(Color::Yellow)),
@@ -748,16 +832,385 @@ fn draw_keybindings(frame: &mut Frame, _app: &App, area: Rect) {
         Span::styled("ecode ", Style::default().fg(Color::DarkGray)),
         Span::styled("[s]", Style::default().fg(Color::Yellow)),
         Span::styled("quelch ", Style::default().fg(Color::DarkGray)),
+        Span::styled("[/]", Style::default().fg(Color::Yellow)),
+        Span::styled("vol ", Style::default().fg(Color::DarkGray)),
+    ];
+
+    if app.view_tab == ViewTab::Analysis {
+        spans.extend([
+            Span::styled("[a]", Style::default().fg(Color::Yellow)),
+            Span::styled("nalyze ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[A]", Style::default().fg(Color::Yellow)),
+            Span::styled("track ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[r]", Style::default().fg(Color::Yellow)),
+            Span::styled("ef ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[c]", Style::default().fg(Color::Yellow)),
+            Span::styled("mp ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[x]", Style::default().fg(Color::Yellow)),
+            Span::styled("port ", Style::default().fg(Color::DarkGray)),
+        ]);
+    } else {
+        spans.extend([
+            Span::styled("[p]", Style::default().fg(Color::Yellow)),
+            Span::styled("rofile ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[g]", Style::default().fg(Color::Yellow)),
+            Span::styled("enscan ", Style::default().fg(Color::DarkGray)),
+        ]);
+    }
+
+    spans.extend([
+        Span::styled("[b]", Style::default().fg(Color::Yellow)),
+        Span::styled("mark ", Style::default().fg(Color::DarkGray)),
+        Span::styled("[R]", Style::default().fg(Color::Yellow)),
+        Span::styled("eport ", Style::default().fg(Color::DarkGray)),
         Span::styled("[Tab]", Style::default().fg(Color::Yellow)),
         Span::styled("view ", Style::default().fg(Color::DarkGray)),
-        Span::styled("[↑↓]", Style::default().fg(Color::Yellow)),
-        Span::styled("tune ", Style::default().fg(Color::DarkGray)),
-        Span::styled("[←→]", Style::default().fg(Color::Yellow)),
-        Span::styled("step", Style::default().fg(Color::DarkGray)),
-    ];
+    ]);
 
     let bar = Paragraph::new(Line::from(spans));
     frame.render_widget(bar, area);
+}
+
+// ============================================================================
+// Analysis tab
+// ============================================================================
+
+fn draw_analysis_tab(frame: &mut Frame, app: &App) {
+    let size = frame.area();
+
+    let has_tracking = app.tracking_data.is_some();
+
+    let chunks = if has_tracking {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),           // Header
+                Constraint::Percentage(25),      // Spectrum
+                Constraint::Length(6),           // Tracking sparkline
+                Constraint::Min(6),              // Measurement readout
+                Constraint::Length(2),           // Keybindings
+            ])
+            .split(size)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),           // Header
+                Constraint::Percentage(30),      // Spectrum
+                Constraint::Length(0),           // No tracking
+                Constraint::Min(6),              // Measurement readout
+                Constraint::Length(2),           // Keybindings
+            ])
+            .split(size)
+    };
+
+    draw_header(frame, app, chunks[0]);
+    draw_spectrum(frame, app, &app.dsp, chunks[1]);
+    if has_tracking {
+        draw_tracking_sparkline(frame, app, chunks[2]);
+    }
+    draw_measurement_readout(frame, app, chunks[3]);
+    draw_keybindings(frame, app, chunks[4]);
+}
+
+/// SNR tracking sparkline over time.
+fn draw_tracking_sparkline(frame: &mut Frame, app: &App, area: Rect) {
+    let tracking_label = if app.tracking_active { "TRACKING" } else { "PAUSED" };
+    let label_color = if app.tracking_active { Color::Green } else { Color::DarkGray };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(vec![
+            Span::styled(" SNR ", Style::default().fg(Color::Cyan)),
+            Span::styled(tracking_label, Style::default().fg(label_color)),
+            Span::raw(" "),
+        ]);
+
+    if let Some(ref snap) = app.tracking_data {
+        // Convert SNR (timestamp, value) pairs to u64 for Sparkline
+        let snr_data: Vec<u64> = snap.snr.iter().map(|&(_t, v)| {
+            // Shift range: SNR typically -10 to +40 dB → 0..50
+            (v + 10.0).clamp(0.0, 60.0) as u64
+        }).collect();
+
+        if snr_data.is_empty() {
+            let para = Paragraph::new(Line::from(Span::styled(
+                "  Collecting data...",
+                Style::default().fg(Color::DarkGray),
+            ))).block(block);
+            frame.render_widget(para, area);
+        } else {
+            let sparkline = Sparkline::default()
+                .block(block)
+                .data(&snr_data)
+                .max(60)
+                .style(Style::default().fg(Color::Cyan));
+            frame.render_widget(sparkline, area);
+        }
+    } else {
+        let para = Paragraph::new(Line::from(Span::styled(
+            "  Press [A] to start tracking",
+            Style::default().fg(Color::DarkGray),
+        ))).block(block);
+        frame.render_widget(para, area);
+    }
+}
+
+/// Measurement results and analysis readout panel.
+fn draw_measurement_readout(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(area);
+
+    // Left: measurement/analysis results
+    draw_analysis_results(frame, app, chunks[0]);
+
+    // Right: tracking summary + reference status
+    draw_tracking_summary(frame, app, chunks[1]);
+}
+
+/// Left panel: latest analysis result.
+fn draw_analysis_results(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Analysis Results ");
+
+    let lines = match &app.analysis_result {
+        None => {
+            vec![
+                Line::from(Span::styled(
+                    "  No analysis run yet",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::styled(
+                    "  Press [a] to measure signal",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
+        }
+        Some(result) => format_analysis_result(result),
+    };
+
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, area);
+}
+
+/// Format an AnalysisResult into display lines.
+fn format_analysis_result(result: &wavecore::analysis::AnalysisResult) -> Vec<Line<'static>> {
+    use wavecore::analysis::AnalysisResult;
+    match result {
+        AnalysisResult::Measurement(r) => vec![
+            Line::from(vec![
+                Span::styled("  -3dB BW: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} kHz", r.bandwidth_3db_hz / 1e3), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::styled("  -6dB BW: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} kHz", r.bandwidth_6db_hz / 1e3), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::styled("  OccupBW: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} kHz ({:.1}%)", r.occupied_bw_hz / 1e3, r.obw_percent), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Ch Pwr:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} dBFS", r.channel_power_dbfs), color_by_level(r.channel_power_dbfs)),
+            ]),
+            Line::from(vec![
+                Span::styled("  ACPR:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("L:{:.1} U:{:.1} dBc", r.acpr_lower_dbc, r.acpr_upper_dbc), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  PAPR:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} dB", r.papr_db), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Offset:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} Hz", r.freq_offset_hz), Style::default().fg(Color::White)),
+            ]),
+        ],
+        AnalysisResult::Burst(r) => vec![
+            Line::from(vec![
+                Span::styled("  Bursts:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}", r.burst_count), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Width:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} us", r.mean_pulse_width_us), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  PRI:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} us", r.mean_pri_us), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Duty:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1}%", r.duty_cycle * 100.0), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  SNR:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} dB", r.mean_burst_snr_db), color_by_snr(r.mean_burst_snr_db)),
+            ]),
+        ],
+        AnalysisResult::Modulation(r) => vec![
+            Line::from(vec![
+                Span::styled("  Type:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}", r.modulation_type), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Conf:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.0}%", r.confidence * 100.0), Style::default().fg(Color::White)),
+            ]),
+            if let Some(rate) = r.symbol_rate_hz {
+                Line::from(vec![
+                    Span::styled("  SymRate: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{:.1} baud", rate), Style::default().fg(Color::Yellow)),
+                ])
+            } else {
+                Line::from(Span::raw(""))
+            },
+            if let Some(dev) = r.fm_deviation_hz {
+                Line::from(vec![
+                    Span::styled("  FM Dev:  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{:.1} kHz", dev / 1e3), Style::default().fg(Color::Yellow)),
+                ])
+            } else {
+                Line::from(Span::raw(""))
+            },
+        ],
+        AnalysisResult::Comparison(r) => vec![
+            Line::from(vec![
+                Span::styled("  RMS diff:", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {:.2} dB", r.rms_diff_db), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Peak:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.2} dB (bin {})", r.peak_diff_db, r.peak_diff_bin), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Corr:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.4}", r.correlation), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  New sig: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}", r.new_signals.len()), Style::default().fg(Color::Green)),
+                Span::styled("  Lost: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}", r.lost_signals.len()), Style::default().fg(Color::Red)),
+            ]),
+        ],
+        AnalysisResult::Tracking(snap) => vec![
+            Line::from(vec![
+                Span::styled("  Duration:", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {:.1}s", snap.summary.duration_secs), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  SNR avg: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1} dB", snap.summary.snr_mean), color_by_snr(snap.summary.snr_mean)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Drift:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.2} Hz/s", snap.summary.freq_drift_hz_per_sec), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Stabil:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.0}%", snap.summary.stability_score * 100.0), Style::default().fg(Color::White)),
+            ]),
+        ],
+        AnalysisResult::ExportComplete { path, format } => vec![
+            Line::from(vec![
+                Span::styled("  Exported: ", Style::default().fg(Color::Green)),
+                Span::styled(path.clone(), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Format:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format.clone(), Style::default().fg(Color::White)),
+            ]),
+        ],
+        AnalysisResult::Bitstream(r) => vec![
+            Line::from(vec![
+                Span::styled("  Length:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{} bits", r.length), Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Entropy: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.2} bits/byte", r.entropy_per_byte), Style::default().fg(Color::White)),
+            ]),
+            if let Some(ref enc) = r.encoding_guess {
+                Line::from(vec![
+                    Span::styled("  Encode:  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(enc.clone(), Style::default().fg(Color::Cyan)),
+                ])
+            } else {
+                Line::from(Span::raw(""))
+            },
+        ],
+    }
+}
+
+/// Right panel: tracking summary and reference status.
+fn draw_tracking_summary(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Tracking & Reference ");
+
+    let mut lines = vec![];
+
+    // Tracking status
+    let track_status = if app.tracking_active { "ACTIVE" } else { "OFF" };
+    let track_color = if app.tracking_active { Color::Green } else { Color::DarkGray };
+    lines.push(Line::from(vec![
+        Span::styled("  Track: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(track_status, Style::default().fg(track_color).add_modifier(Modifier::BOLD)),
+    ]));
+
+    // Reference status
+    let ref_status = if app.reference_captured { "CAPTURED" } else { "NONE" };
+    let ref_color = if app.reference_captured { Color::Cyan } else { Color::DarkGray };
+    lines.push(Line::from(vec![
+        Span::styled("  Ref:   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(ref_status, Style::default().fg(ref_color)),
+    ]));
+
+    lines.push(Line::from(Span::raw("")));
+
+    // Tracking summary if available
+    if let Some(ref snap) = app.tracking_data {
+        let s = &snap.summary;
+        lines.push(Line::from(vec![
+            Span::styled("  Dur:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:.1}s", s.duration_secs), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  SNR:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:.1} [{:.1}..{:.1}] dB", s.snr_mean, s.snr_min, s.snr_max),
+                color_by_snr(s.snr_mean),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Power: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:.1} dBFS", s.power_mean), color_by_level(s.power_mean)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Drift: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:.2} Hz/s", s.freq_drift_hz_per_sec), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Stab:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:.0}%", s.stability_score * 100.0), Style::default().fg(Color::White)),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  No tracking data",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, area);
 }
 
 // ============================================================================

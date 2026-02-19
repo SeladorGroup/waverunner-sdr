@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for WaveRunner GUI",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

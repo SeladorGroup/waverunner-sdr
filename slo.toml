@@ -1,0 +1,32 @@
+# WaveRunner Service Level Objectives
+#
+# Machine-readable SLO definitions. These thresholds are enforced
+# in automated tests (soak_test.rs, slo_test.rs) and CI gates.
+#
+# All values are per-session targets at the reference load:
+# 2.048 MS/s sample rate, 2048-point FFT, single RTL-SDR device.
+
+[drop_budget]
+# Maximum block drop rate (fraction of total blocks). 0.0 = zero tolerance.
+max_block_drop_rate = 0.0
+# Maximum event drop rate (fraction of total events). 0.1% tolerance.
+max_event_drop_rate = 0.001
+
+[latency]
+# Per-block processing budget in microseconds.
+max_block_latency_us = 500
+# Per-stage budgets (subset of block budget).
+max_fft_latency_us = 200
+max_cfar_latency_us = 100
+
+[throughput]
+# Minimum sustained throughput in MS/s at reference sample rate.
+sustained_throughput_msps = 2.0
+
+[startup]
+# Maximum blocks before first Stats event emitted.
+max_startup_blocks = 50
+
+[export]
+# Maximum time for a typical export operation in milliseconds.
+max_export_time_ms = 5000

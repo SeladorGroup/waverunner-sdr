@@ -1,18 +1,12 @@
 use std::io::Write;
-use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
-use crossbeam_channel::select;
+use anyhow::Result;
 
-use wavecore::buffer::{PipelineConfig, sample_pipeline};
-use wavecore::dsp::decoder::{DecoderHandle, DecoderRegistry};
+use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::decoders;
-use wavecore::dsp::preprocess::DcRemover;
-use wavecore::hardware::rtlsdr::RtlSdrDevice;
-use wavecore::hardware::DeviceEnumerator;
-use wavecore::session::DecodedMessage;
-use wavecore::types::{Sample, SampleBlock};
+use wavecore::session::manager::SessionManager;
+use wavecore::session::{Command, DecodedMessage, Event, SessionConfig};
 use wavecore::util::format_freq;
 
 use super::parse_frequency;
@@ -57,6 +51,10 @@ pub enum DecodeProtocol {
     Adsb(AdsbArgs),
     /// Decode RDS/RBDS radio data from FM broadcasts
     Rds(RdsArgs),
+    /// Run any registered decoder by name (use `decode list` to see all)
+    Run(RunArgs),
+    /// List all available decoders
+    List,
 }
 
 #[derive(clap::Args)]
@@ -84,19 +82,29 @@ pub struct RdsArgs {
     pub frequency: f64,
 }
 
+#[derive(clap::Args)]
+pub struct RunArgs {
+    /// Decoder name (e.g., aprs, ais, ook, rtl433, noaa-apt-15)
+    pub name: String,
+
+    /// Center frequency (supports suffixes: k, M, G)
+    #[arg(short, long, value_parser = parse_frequency)]
+    pub frequency: f64,
+}
+
 // ============================================================================
 // Protocol defaults
 // ============================================================================
 
 /// Sample rate and decoder name for each protocol.
 struct ProtocolConfig {
-    decoder_name: &'static str,
+    decoder_name: String,
     default_sample_rate: f64,
     frequency: f64,
-    description: &'static str,
+    description: String,
 }
 
-fn protocol_config(protocol: &DecodeProtocol) -> ProtocolConfig {
+fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
     match protocol {
         DecodeProtocol::Pocsag(args) => {
             let name = match args.baud {
@@ -104,30 +112,44 @@ fn protocol_config(protocol: &DecodeProtocol) -> ProtocolConfig {
                 2400 => "pocsag-2400",
                 _ => "pocsag-1200",
             };
-            ProtocolConfig {
-                decoder_name: name,
+            Some(ProtocolConfig {
+                decoder_name: name.to_string(),
                 // POCSAG needs enough bandwidth for ±4.5 kHz FSK.
                 // 22050 Hz gives ~5× oversampling at 1200 baud.
                 default_sample_rate: 2_048_000.0,
                 frequency: args.frequency,
-                description: "POCSAG pager",
-            }
+                description: "POCSAG pager".to_string(),
+            })
         }
-        DecodeProtocol::Adsb(args) => ProtocolConfig {
-            decoder_name: "adsb",
+        DecodeProtocol::Adsb(args) => Some(ProtocolConfig {
+            decoder_name: "adsb".to_string(),
             // ADS-B PPM at 1 Mbps needs ≥2 MS/s for Nyquist
             default_sample_rate: 2_000_000.0,
             frequency: args.frequency,
-            description: "ADS-B 1090 MHz",
-        },
-        DecodeProtocol::Rds(args) => ProtocolConfig {
-            decoder_name: "rds",
+            description: "ADS-B 1090 MHz".to_string(),
+        }),
+        DecodeProtocol::Rds(args) => Some(ProtocolConfig {
+            decoder_name: "rds".to_string(),
             // RDS 57 kHz subcarrier needs ≥114 kHz sample rate.
             // 228 kHz is 4× oversampling of the subcarrier.
             default_sample_rate: 228_000.0,
             frequency: args.frequency,
-            description: "RDS/RBDS",
-        },
+            description: "RDS/RBDS".to_string(),
+        }),
+        DecodeProtocol::Run(args) => {
+            // Use the decoder's declared requirements for sample rate
+            let mut registry = DecoderRegistry::new();
+            decoders::register_all(&mut registry);
+            let decoder = registry.create(&args.name)?;
+            let req = decoder.requirements();
+            Some(ProtocolConfig {
+                decoder_name: args.name.clone(),
+                default_sample_rate: req.sample_rate.max(250_000.0),
+                frequency: args.frequency,
+                description: args.name.clone(),
+            })
+        }
+        DecodeProtocol::List => None,
     }
 }
 
@@ -136,45 +158,51 @@ fn protocol_config(protocol: &DecodeProtocol) -> ProtocolConfig {
 // ============================================================================
 
 pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
-    let pcfg = protocol_config(&args.protocol);
+    // Handle `decode list` — print all registered decoders and exit
+    if matches!(args.protocol, DecodeProtocol::List) {
+        println!("Available decoders:");
+        for name in decoders::DECODER_NAMES {
+            println!("  {name}");
+        }
+        return Ok(());
+    }
+
+    let pcfg = match protocol_config(&args.protocol) {
+        Some(cfg) => cfg,
+        None => anyhow::bail!("Unknown decoder. Use `decode list` to see available decoders."),
+    };
     let sample_rate = args.sample_rate.unwrap_or(pcfg.default_sample_rate);
     let gain_mode = wavecore::util::parse_gain(&args.gain)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Open hardware
-    let device = Arc::new(
-        RtlSdrDevice::open(device_index).context("Failed to open SDR device")?,
-    );
-    device
-        .set_frequency(pcfg.frequency)
-        .context("Failed to set frequency")?;
-    device
-        .set_sample_rate(sample_rate)
-        .context("Failed to set sample rate")?;
-    device
-        .set_gain(gain_mode)
-        .context("Failed to set gain")?;
-    if args.ppm != 0 {
-        device.set_ppm(args.ppm).context("Failed to set PPM")?;
-    }
-
-    // Build decoder registry and instantiate our decoder
+    // Build decoder registry for the SessionManager
     let mut registry = DecoderRegistry::new();
     decoders::register_all(&mut registry);
 
-    let decoder = registry
-        .create(pcfg.decoder_name)
-        .ok_or_else(|| anyhow::anyhow!("Unknown decoder: {}", pcfg.decoder_name))?;
+    // Verify the decoder name is valid before starting hardware
+    if registry.create(&pcfg.decoder_name).is_none() {
+        anyhow::bail!("Unknown decoder: {}", pcfg.decoder_name);
+    }
 
-    // Decoded message channel
-    let (decoded_tx, decoded_rx) = crossbeam_channel::unbounded::<DecodedMessage>();
+    // Create session config
+    let config = SessionConfig {
+        schema_version: 1,
+        device_index,
+        frequency: pcfg.frequency,
+        sample_rate,
+        gain: gain_mode,
+        ppm: args.ppm,
+        fft_size: 2048,
+        pfa: 1e-4,
+    };
 
-    // Spawn decoder in its own thread with bounded sample channel
-    // Ring buffer capacity 64 blocks — decoder drops oldest if behind
-    let decoder_handle = DecoderHandle::spawn(decoder, decoded_tx, 64);
+    // Start SessionManager — handles hardware, pipeline, DC removal, DSP
+    let (session, event_rx) = SessionManager::new(config, registry)
+        .map_err(|e| anyhow::anyhow!("Failed to start session: {e}"))?;
 
-    // DC removal for ADC offset
-    let mut dc_remover = DcRemover::from_cutoff(100.0, sample_rate);
+    // Enable the decoder via SessionManager command
+    session.send(Command::EnableDecoder(pcfg.decoder_name.to_string()))
+        .map_err(|e| anyhow::anyhow!("Failed to enable decoder: {e}"))?;
 
     // Print banner
     println!(
@@ -190,89 +218,60 @@ pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
     );
     println!("Press Ctrl+C to stop.\n");
 
-    // Pipeline
-    let (producer, consumer) = sample_pipeline(PipelineConfig::default());
-
-    // Hardware reader thread
-    let device_clone = Arc::clone(&device);
-    let reader_handle = std::thread::spawn(move || {
-        let mut sequence = 0u64;
-        let start = Instant::now();
-        let _ = device_clone.start_rx(Box::new(move |samples: &[Sample]| {
-            let block = SampleBlock {
-                samples: samples.to_vec(),
-                center_freq: 0.0,
-                sample_rate: 0.0,
-                sequence,
-                timestamp_ns: start.elapsed().as_nanos() as u64,
-            };
-            let _ = producer.send(block);
-            sequence += 1;
-        }));
-    });
-
-    // Ctrl+C handler
-    let device_for_stop = Arc::clone(&device);
-    let (stop_tx, stop_rx) = crossbeam_channel::bounded::<()>(1);
+    // Ctrl+C handler — sends Shutdown via the session's command channel
+    let running = session.running_flag();
+    let cmd_tx = session.cmd_sender();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         eprintln!("\nStopping...");
-        device_for_stop.stop_rx().ok();
-        stop_tx.send(()).ok();
+        running.store(false, std::sync::atomic::Ordering::Relaxed);
+        cmd_tx.send(Command::Shutdown).ok();
     });
 
     let mut msg_count = 0u64;
-    let mut block_count = 0u64;
     let start_time = Instant::now();
 
-    // Main processing loop — minimal: DC removal then feed decoder
-    loop {
-        select! {
-            recv(stop_rx) -> _ => break,
-            default => {
-                // Drain decoded messages
-                while let Ok(msg) = decoded_rx.try_recv() {
-                    msg_count += 1;
-                    print_message(&msg, msg_count, &args.format);
-                }
-
-                // Process next sample block
-                if let Some(block) = consumer.try_recv() {
-                    let mut samples = block.samples;
-                    dc_remover.process(&mut samples);
-                    decoder_handle.feed(samples);
-                    block_count += 1;
-
-                    // Periodic status on stderr
-                    if block_count % 50 == 0 {
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        eprint!(
-                            "\r  [{:.0}s] blocks: {} | messages: {} ",
-                            elapsed, block_count, msg_count,
-                        );
-                        std::io::stderr().flush().ok();
-                    }
-                } else {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
+    // Drain events — we only care about DecodedMessage and Stats (for progress)
+    while session.is_running() {
+        match event_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(Event::DecodedMessage(msg)) => {
+                msg_count += 1;
+                print_message(&msg, msg_count, &args.format);
             }
+            Ok(Event::Stats(stats)) => {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                eprint!(
+                    "\r  [{:.0}s] blocks: {} | messages: {} ",
+                    elapsed, stats.blocks_processed, msg_count,
+                );
+                std::io::stderr().flush().ok();
+            }
+            Ok(Event::Error(e)) => {
+                eprintln!("\nError: {e}");
+            }
+            Ok(_) => {
+                // Ignore spectrum, detections, demod-vis, status events
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
     }
 
-    // Drain remaining messages
-    while let Ok(msg) = decoded_rx.try_recv() {
-        msg_count += 1;
-        print_message(&msg, msg_count, &args.format);
+    // Drain remaining events after shutdown
+    while let Ok(event) = event_rx.try_recv() {
+        if let Event::DecodedMessage(msg) = event {
+            msg_count += 1;
+            print_message(&msg, msg_count, &args.format);
+        }
     }
 
     // Cleanup
-    decoder_handle.stop();
-    reader_handle.join().ok();
+    session.shutdown();
 
     let elapsed = start_time.elapsed().as_secs_f64();
     eprintln!(
-        "\nDone. {} messages decoded in {:.1}s ({} blocks processed).",
-        msg_count, elapsed, block_count,
+        "\nDone. {} messages decoded in {:.1}s.",
+        msg_count, elapsed,
     );
     Ok(())
 }

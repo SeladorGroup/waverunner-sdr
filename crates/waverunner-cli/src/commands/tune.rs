@@ -40,6 +40,7 @@ pub async fn run(args: TuneArgs, device_index: u32) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
+        schema_version: 1,
         device_index,
         frequency: args.frequency,
         sample_rate: args.sample_rate,
@@ -92,7 +93,7 @@ pub async fn run(args: TuneArgs, device_index: u32) -> Result<()> {
                         let peak_bin = spectrum
                             .iter()
                             .enumerate()
-                            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                             .map(|(i, _)| i)
                             .unwrap_or(0);
                         let peak_offset = (peak_bin as f64 - spectrum.len() as f64 / 2.0)

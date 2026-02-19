@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 use crate::types::Sample;
 
 /// Comprehensive signal statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SignalStats {
     pub mean: Sample,
     pub variance: f32,

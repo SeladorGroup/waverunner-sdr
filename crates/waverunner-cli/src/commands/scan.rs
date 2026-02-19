@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use wavecore::dsp::decoder::DecoderRegistry;
+use wavecore::analysis::report::{ScanDetection, ScanReport, export_scan_report};
 use wavecore::dsp::detection::{
     CfarConfig, CfarMethod, cfar_detect, db_to_linear, noise_floor_sigma_clip,
 };
@@ -33,7 +34,7 @@ pub struct ScanArgs {
     pub sample_rate: f64,
 
     /// Dwell time per step in milliseconds
-    #[arg(short, long, default_value = "100")]
+    #[arg(short = 'D', long, default_value = "100")]
     pub dwell_ms: u64,
 
     /// CFAR false alarm probability (lower = fewer false detections)
@@ -55,6 +56,14 @@ pub struct ScanArgs {
     /// CFAR method: ca (cell-averaging), go (greatest-of), os (ordered-statistic)
     #[arg(long, default_value = "ca")]
     pub cfar: String,
+
+    /// Output file for scan results (JSON or CSV)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Output format: json (default) or csv
+    #[arg(long, default_value = "json")]
+    pub format: String,
 }
 
 pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
@@ -81,6 +90,7 @@ pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
     };
 
     let config = SessionConfig {
+        schema_version: 1,
         device_index,
         frequency: args.start,
         sample_rate: args.sample_rate,
@@ -134,6 +144,7 @@ pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
     let mut freq = args.start;
     let mut signals_found = 0u32;
     let mut current_step = 0usize;
+    let mut scan_detections: Vec<ScanDetection> = Vec::new();
 
     while freq <= args.end && running.load(Ordering::SeqCst) {
         current_step += 1;
@@ -213,6 +224,17 @@ pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
             signals_found += 1;
             let det_freq = freq + det.freq_offset_hz;
 
+            // Estimate bandwidth for collection
+            let bw_bins_pre = estimate_signal_bandwidth(&avg_db, det.bin, noise_floor + 3.0);
+            let bw_hz_pre = bw_bins_pre as f64 * args.sample_rate / fft_size as f64;
+
+            scan_detections.push(ScanDetection {
+                frequency_hz: det_freq,
+                power_db: det.power_db,
+                snr_db: det.snr_db,
+                bandwidth_hz: bw_hz_pre,
+            });
+
             // Bandwidth estimation from contiguous bins above noise floor
             let bw_bins = estimate_signal_bandwidth(&avg_db, det.bin, noise_floor + 3.0);
             let bw_hz = bw_bins as f64 * args.sample_rate / fft_size as f64;
@@ -249,6 +271,23 @@ pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
     eprint!("\r{}\r", " ".repeat(50));
     println!("{}", "=".repeat(85));
     println!("Scan complete. {} signal(s) found.", signals_found);
+
+    // Export scan results if --output specified
+    if let Some(ref output_path) = args.output {
+        let report = ScanReport {
+            start_freq: args.start,
+            end_freq: args.end,
+            step_hz: step,
+            dwell_ms: args.dwell_ms,
+            signals_found,
+            detections: scan_detections,
+        };
+        let path = std::path::Path::new(output_path);
+        match export_scan_report(&report, path, &args.format) {
+            Ok(p) => println!("Scan results written to {p}"),
+            Err(e) => eprintln!("Failed to write scan results: {e}"),
+        }
+    }
 
     session.shutdown();
     Ok(())

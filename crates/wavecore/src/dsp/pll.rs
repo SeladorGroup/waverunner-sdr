@@ -568,7 +568,7 @@ mod tests {
             let sample = Sample::new(t.cos() as f32, t.sin() as f32);
             let (_, error, _) = pll.step(sample);
 
-            if i >= 1000 && i < 3000 {
+            if (1000..3000).contains(&i) {
                 early_error += error.abs() as f64;
             }
             if i >= n - 2000 {

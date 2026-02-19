@@ -5,7 +5,7 @@ use crate::types::{DeviceInfo, Frequency, Sample, SampleRate};
 pub type RxCallback = Box<dyn FnMut(&[Sample]) + Send>;
 
 /// Gain control mode.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GainMode {
     /// Automatic gain control.
     Auto,

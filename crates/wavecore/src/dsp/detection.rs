@@ -3,7 +3,7 @@ use std::f32::consts::PI;
 use crate::types::Sample;
 
 /// Detected signal in a spectrum.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Detection {
     /// Bin index in the spectrum.
     pub bin: usize,

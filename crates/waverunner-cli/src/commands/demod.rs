@@ -99,6 +99,7 @@ pub async fn run(args: DemodArgs, device_index: u32) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
+        schema_version: 1,
         device_index,
         frequency: args.frequency,
         sample_rate,

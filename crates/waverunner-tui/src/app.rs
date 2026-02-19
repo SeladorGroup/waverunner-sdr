@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 
 use wavecore::dsp::detection::Detection;
 use wavecore::dsp::statistics::SignalStats;
+use wavecore::mode::ModeController;
 use wavecore::session::{DecodedMessage, DemodVisData, SessionStats, SpectrumFrame};
 use wavecore::types::Frequency;
 
@@ -23,6 +24,8 @@ pub enum ViewTab {
     Constellation,
     /// Spectrum + detailed stats table
     Statistics,
+    /// Spectrum + tracking sparkline + measurement readout
+    Analysis,
 }
 
 impl ViewTab {
@@ -30,15 +33,17 @@ impl ViewTab {
         match self {
             ViewTab::Standard => ViewTab::Constellation,
             ViewTab::Constellation => ViewTab::Statistics,
-            ViewTab::Statistics => ViewTab::Standard,
+            ViewTab::Statistics => ViewTab::Analysis,
+            ViewTab::Analysis => ViewTab::Standard,
         }
     }
 
     pub fn prev(&self) -> ViewTab {
         match self {
-            ViewTab::Standard => ViewTab::Statistics,
+            ViewTab::Standard => ViewTab::Analysis,
             ViewTab::Constellation => ViewTab::Standard,
             ViewTab::Statistics => ViewTab::Constellation,
+            ViewTab::Analysis => ViewTab::Statistics,
         }
     }
 
@@ -47,15 +52,18 @@ impl ViewTab {
             ViewTab::Standard => "Standard",
             ViewTab::Constellation => "Constellation",
             ViewTab::Statistics => "Statistics",
+            ViewTab::Analysis => "Analysis",
         }
     }
 }
 
 /// Available decoder names for the [d]ecoder key.
-pub const AVAILABLE_DECODERS: &[&str] = &["pocsag", "adsb", "rds"];
+///
+/// Sourced from the canonical registry list so names can never drift.
+pub const AVAILABLE_DECODERS: &[&str] = wavecore::dsp::decoders::DECODER_NAMES;
 
 /// Maximum decoded messages kept in the ring buffer.
-const MAX_DECODED_MESSAGES: usize = 50;
+const MAX_DECODED_MESSAGES: usize = 500;
 
 /// Tuning step sizes available for keyboard navigation.
 /// Organized by SI prefix for intuitive stepping.
@@ -258,6 +266,42 @@ pub struct App {
 
     /// Current view tab.
     pub view_tab: ViewTab,
+
+    /// Mode controller for orchestrating scan modes and profiles.
+    pub mode_controller: ModeController,
+
+    /// Current mode status string for header display.
+    pub mode_status: Option<String>,
+
+    /// Latest analysis result (from RunAnalysis command).
+    pub analysis_result: Option<wavecore::analysis::AnalysisResult>,
+
+    /// Latest tracking data snapshot (~1 Hz updates).
+    pub tracking_data: Option<wavecore::analysis::tracking::TrackingSnapshot>,
+
+    /// Whether time-series tracking is active.
+    pub tracking_active: bool,
+
+    /// Whether a reference spectrum has been captured.
+    pub reference_captured: bool,
+
+    /// Pipeline health status.
+    pub health: wavecore::session::HealthStatus,
+
+    /// Per-stage latency breakdown.
+    pub latency: wavecore::session::LatencyBreakdown,
+
+    /// Number of annotations in the session timeline.
+    pub annotation_count: u64,
+
+    /// Buffer occupancy (for display).
+    pub buffer_occupancy: u16,
+
+    /// Events dropped counter.
+    pub events_dropped: u64,
+
+    /// Audio volume 0-100%.
+    pub volume: u8,
 }
 
 impl App {
@@ -289,6 +333,20 @@ impl App {
             active_decoder: None,
             decoded_messages: VecDeque::with_capacity(MAX_DECODED_MESSAGES),
             view_tab: ViewTab::Standard,
+            mode_controller: ModeController::new(
+                AVAILABLE_DECODERS.iter().map(|s| s.to_string()).collect(),
+            ),
+            mode_status: None,
+            analysis_result: None,
+            tracking_data: None,
+            tracking_active: false,
+            reference_captured: false,
+            health: wavecore::session::HealthStatus::Normal,
+            latency: wavecore::session::LatencyBreakdown::default(),
+            annotation_count: 0,
+            buffer_occupancy: 0,
+            events_dropped: 0,
+            volume: 80,
         }
     }
 
@@ -331,6 +389,10 @@ impl App {
         self.blocks_dropped = stats.blocks_dropped;
         self.cpu_load_percent = stats.cpu_load_percent;
         self.throughput_msps = stats.throughput_msps;
+        self.health = stats.health;
+        self.latency = stats.latency;
+        self.buffer_occupancy = stats.buffer_occupancy;
+        self.events_dropped = stats.events_dropped;
     }
 
     /// Push a new spectrum line into the waterfall circular buffer.
@@ -454,6 +516,136 @@ impl App {
             Some(0) => None,
             Some(idx) => Some(AVAILABLE_DECODERS[idx - 1].to_string()),
         };
+    }
+
+    /// Cycle mode forward: None → aviation → pager → fm-broadcast → general → None.
+    /// Returns commands from activating/deactivating the mode.
+    pub fn cycle_mode_forward(&mut self) -> Vec<wavecore::session::Command> {
+        let profiles = self.mode_controller.list_profiles().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let current = self.mode_controller.active_mode().map(|s| s.to_string());
+
+        let mut cmds = self.mode_controller.deactivate();
+
+        let next = match current.as_deref() {
+            None if !profiles.is_empty() => Some(profiles[0].clone()),
+            Some(name) => {
+                if name == "general" {
+                    None
+                } else if let Some(idx) = profiles.iter().position(|p| p == name) {
+                    if idx + 1 < profiles.len() {
+                        Some(profiles[idx + 1].clone())
+                    } else {
+                        Some("general".to_string())
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(ref name) = next {
+            if name == "general" {
+                let config = wavecore::mode::general::GeneralModeConfig {
+                    scan_start: self.frequency - self.sample_rate / 2.0,
+                    scan_end: self.frequency + self.sample_rate / 2.0,
+                    ..Default::default()
+                };
+                let mode = wavecore::mode::general::GeneralMode::new(config);
+                cmds.extend(self.mode_controller.activate(Box::new(mode)));
+            } else if let Some(mode) = self.mode_controller.create_profile_mode(name) {
+                cmds.extend(self.mode_controller.activate(mode));
+            }
+        }
+
+        self.mode_status = self.mode_controller.mode_status();
+        cmds
+    }
+
+    /// Cycle mode backward.
+    pub fn cycle_mode_back(&mut self) -> Vec<wavecore::session::Command> {
+        let profiles = self.mode_controller.list_profiles().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let current = self.mode_controller.active_mode().map(|s| s.to_string());
+
+        let mut cmds = self.mode_controller.deactivate();
+
+        let next = match current.as_deref() {
+            None => Some("general".to_string()),
+            Some("general") if !profiles.is_empty() => Some(profiles[profiles.len() - 1].clone()),
+            Some("general") => None,
+            Some(name) => {
+                if let Some(idx) = profiles.iter().position(|p| p == name) {
+                    if idx > 0 {
+                        Some(profiles[idx - 1].clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(ref name) = next {
+            if name == "general" {
+                let config = wavecore::mode::general::GeneralModeConfig {
+                    scan_start: self.frequency - self.sample_rate / 2.0,
+                    scan_end: self.frequency + self.sample_rate / 2.0,
+                    ..Default::default()
+                };
+                let mode = wavecore::mode::general::GeneralMode::new(config);
+                cmds.extend(self.mode_controller.activate(Box::new(mode)));
+            } else if let Some(mode) = self.mode_controller.create_profile_mode(name) {
+                cmds.extend(self.mode_controller.activate(mode));
+            }
+        }
+
+        self.mode_status = self.mode_controller.mode_status();
+        cmds
+    }
+
+    /// Toggle general scan mode on/off using the visible spectrum range.
+    pub fn toggle_general_scan(&mut self) -> Vec<wavecore::session::Command> {
+        if self.mode_controller.active_mode() == Some("general") {
+            let cmds = self.mode_controller.deactivate();
+            self.mode_status = None;
+            cmds
+        } else {
+            let mut cmds = self.mode_controller.deactivate();
+            let config = wavecore::mode::general::GeneralModeConfig {
+                scan_start: self.frequency - self.sample_rate / 2.0,
+                scan_end: self.frequency + self.sample_rate / 2.0,
+                ..Default::default()
+            };
+            let mode = wavecore::mode::general::GeneralMode::new(config);
+            cmds.extend(self.mode_controller.activate(Box::new(mode)));
+            self.mode_status = self.mode_controller.mode_status();
+            cmds
+        }
+    }
+
+    /// Increase volume by 5%.
+    pub fn volume_up(&mut self) {
+        self.volume = self.volume.saturating_add(5).min(100);
+    }
+
+    /// Decrease volume by 5%.
+    pub fn volume_down(&mut self) {
+        self.volume = self.volume.saturating_sub(5);
+    }
+
+    /// Toggle mute (0) / unmute (80).
+    pub fn volume_toggle_mute(&mut self) {
+        if self.volume > 0 {
+            self.volume = 0;
+        } else {
+            self.volume = 80;
+        }
+    }
+
+    /// Volume as f32 0.0..1.0 for the audio sink.
+    pub fn volume_f32(&self) -> f32 {
+        self.volume as f32 / 100.0
     }
 
     /// Check if app is running.

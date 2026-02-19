@@ -36,7 +36,9 @@ use crossterm::ExecutableCommand;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+use wavecore::analysis;
 use wavecore::dsp::decoder::DecoderRegistry;
+use wavecore::dsp::decoders;
 use wavecore::session::manager::SessionManager;
 use wavecore::session::{Command, DemodConfig, Event, SessionConfig};
 use wavecore::util::{parse_frequency, parse_gain};
@@ -83,19 +85,30 @@ fn main() -> Result<()> {
     let gain_mode = parse_gain(&cli.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Initialize tracing to file (not stdout — that's the TUI)
-    tracing_subscriber::fmt()
-        .with_writer(|| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/waverunner-tui.log")
-                .unwrap()
-        })
-        .with_env_filter("waverunner_tui=debug,wavecore=info")
-        .init();
+    // Initialize tracing to file — fall back to sink if open fails
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/waverunner-tui.log");
+    match log_file {
+        Ok(file) => {
+            tracing_subscriber::fmt()
+                .with_writer(std::sync::Mutex::new(file))
+                .with_env_filter("waverunner_tui=debug,wavecore=info")
+                .init();
+        }
+        Err(e) => {
+            eprintln!("Warning: could not open log file: {e}");
+            tracing_subscriber::fmt()
+                .with_writer(std::io::sink)
+                .with_env_filter("waverunner_tui=debug,wavecore=info")
+                .init();
+        }
+    }
 
     // Create SessionManager — handles hardware, pipeline, and DSP threads
     let config = SessionConfig {
+        schema_version: 1,
         device_index: cli.device,
         frequency,
         sample_rate,
@@ -105,7 +118,8 @@ fn main() -> Result<()> {
         pfa: cli.pfa,
     };
 
-    let registry = DecoderRegistry::new();
+    let mut registry = DecoderRegistry::new();
+    decoders::register_all(&mut registry);
     let (session, events) = SessionManager::new(config, registry)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -129,6 +143,12 @@ fn main() -> Result<()> {
 
         // Drain all pending events from SessionManager
         while let Ok(event) = events.try_recv() {
+            // Forward to mode controller
+            let mode_cmds = app.mode_controller.handle_event(&event);
+            for cmd in mode_cmds {
+                session.send(cmd).ok();
+            }
+
             match event {
                 Event::SpectrumReady(frame) => {
                     app.push_waterfall(&frame.spectrum_db);
@@ -149,9 +169,23 @@ fn main() -> Result<()> {
                 Event::Error(e) => {
                     tracing::error!("Session error: {e}");
                 }
+                Event::AnalysisResult { id: _, result } => {
+                    app.analysis_result = Some(result);
+                }
+                Event::TrackingUpdate(snapshot) => {
+                    app.tracking_data = Some(snapshot);
+                }
+                Event::AnnotationAdded(_) => {}
                 Event::Status(_) => {}
             }
         }
+
+        // Mode controller tick
+        let tick_cmds = app.mode_controller.tick();
+        for cmd in tick_cmds {
+            session.send(cmd).ok();
+        }
+        app.mode_status = app.mode_controller.mode_status();
 
         // Draw
         terminal.draw(|frame| ui::draw(frame, &app))?;
@@ -207,6 +241,119 @@ fn main() -> Result<()> {
                     }
                     Action::CycleViewTab => app.cycle_view_tab(),
                     Action::CycleViewTabBack => app.cycle_view_tab_back(),
+                    Action::CycleMode => {
+                        let cmds = app.cycle_mode_forward();
+                        for cmd in cmds {
+                            session.send(cmd).ok();
+                        }
+                    }
+                    Action::CycleModeBack => {
+                        let cmds = app.cycle_mode_back();
+                        for cmd in cmds {
+                            session.send(cmd).ok();
+                        }
+                    }
+                    Action::ToggleGeneralScan => {
+                        let cmds = app.toggle_general_scan();
+                        for cmd in cmds {
+                            session.send(cmd).ok();
+                        }
+                    }
+                    Action::RunMeasurement => {
+                        // Measure around center of spectrum (or strongest detection)
+                        let fft_size = app.dsp.spectrum_db.len();
+                        let (center_bin, width_bins) = if let Some(det) = app.dsp.detections.first() {
+                            (det.bin.min(fft_size.saturating_sub(1)), 100)
+                        } else {
+                            (fft_size / 2, 100)
+                        };
+                        let request = analysis::AnalysisRequest::MeasureSignal(
+                            analysis::measurement::MeasureConfig {
+                                signal_center_bin: center_bin,
+                                signal_width_bins: width_bins,
+                                adjacent_width_bins: width_bins,
+                                obw_threshold_db: 26.0,
+                            },
+                        );
+                        session.send(Command::RunAnalysis { id: app.frame_count, request }).ok();
+                    }
+                    Action::ToggleTracking => {
+                        app.tracking_active = !app.tracking_active;
+                        if app.tracking_active {
+                            session.send(Command::StartTracking).ok();
+                        } else {
+                            session.send(Command::StopTracking).ok();
+                        }
+                    }
+                    Action::CaptureReference => {
+                        session.send(Command::CaptureReference).ok();
+                        app.reference_captured = true;
+                    }
+                    Action::CompareReference => {
+                        if app.reference_captured {
+                            session.send(Command::RunAnalysis {
+                                id: app.frame_count,
+                                request: analysis::AnalysisRequest::CompareSpectra,
+                            }).ok();
+                        }
+                    }
+                    Action::ExportCsv => {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let path = format!("/tmp/waverunner_export_{timestamp}.csv");
+                        let config = analysis::export::ExportConfig {
+                            path: std::path::PathBuf::from(&path),
+                            format: analysis::export::ExportFormat::Csv,
+                            content: analysis::export::ExportContent::Spectrum {
+                                spectrum_db: app.dsp.spectrum_db.clone(),
+                                sample_rate: app.sample_rate,
+                                center_freq: app.frequency,
+                            },
+                        };
+                        session.send(Command::Export(config)).ok();
+                    }
+                    Action::AddBookmark => {
+                        let text = format!(
+                            "Bookmark @ {:.6} MHz",
+                            app.frequency / 1e6,
+                        );
+                        session
+                            .send(Command::AddAnnotation {
+                                kind: "bookmark".to_string(),
+                                text,
+                            })
+                            .ok();
+                        app.annotation_count += 1;
+                    }
+                    Action::ExportReport => {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let path = format!(
+                            "/tmp/waverunner_timeline_{timestamp}.json"
+                        );
+                        session
+                            .send(Command::ExportTimeline {
+                                path: std::path::PathBuf::from(&path),
+                                format: wavecore::session::TimelineExportFormat::Json,
+                            })
+                            .ok();
+                    }
+                    Action::VolumeUp => {
+                        app.volume_up();
+                        session.send(Command::SetVolume(app.volume_f32())).ok();
+                    }
+                    Action::VolumeDown => {
+                        app.volume_down();
+                        session.send(Command::SetVolume(app.volume_f32())).ok();
+                    }
+                    Action::VolumeMute => {
+                        app.volume_toggle_mute();
+                        session.send(Command::SetVolume(app.volume_f32())).ok();
+                    }
                     Action::FrequencyEntry | Action::FrequencyCancel | Action::None => {}
                 }
             }
@@ -256,5 +403,6 @@ fn send_demod_change(session: &SessionManager, prev: DemodMode, next: DemodMode,
             output_wav: None,
         };
         session.send(Command::StartDemod(config)).ok();
+        session.send(Command::SetVolume(app.volume_f32())).ok();
     }
 }

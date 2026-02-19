@@ -634,12 +634,9 @@ mod tests {
             // Block A: PI code
             let block_a = rds_encode_block(pi, OFFSET_A);
 
-            // Block B: group=0, version=A(0), TP=0, PTY, segment
-            let block_b_data = (0u16 << 12) // group type 0
-                | (0u16 << 11)              // version A
-                | (0u16 << 10)              // TP
-                | ((pty as u16) << 5)       // PTY
-                | (segment & 0x3);          // PS segment
+            // Block B: group_type=0, version_A=0, TP=0, PTY, segment
+            let block_b_data = ((pty as u16) << 5) // PTY
+                | (segment & 0x3);                 // PS segment
             let block_b = rds_encode_block(block_b_data, OFFSET_B);
 
             // Block C: not used for PS in 0A, fill with zeros
@@ -698,12 +695,9 @@ mod tests {
         for segment in 0..4u16 {
             let block_a = rds_encode_block(pi, OFFSET_A);
 
-            // Block B: group=2, version=A(0), TP=0, PTY, AB=0, segment
+            // Block B: group_type=2, version_A=0, TP=0, PTY, AB_flag=0, segment
             let block_b_data = (2u16 << 12)
-                | (0u16 << 11) // version A
-                | (0u16 << 10) // TP
                 | ((pty as u16) << 5)
-                | (0u16 << 4)  // AB flag
                 | (segment & 0xF);
             let block_b = rds_encode_block(block_b_data, OFFSET_B);
 

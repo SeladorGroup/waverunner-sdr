@@ -162,14 +162,34 @@ impl DecoderHandle {
                         Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
                     }
                 }
-            })
-            .expect("failed to spawn decoder thread");
+            });
 
-        Self {
-            thread: Some(thread),
-            sample_tx: Some(sample_tx),
-            running,
-            name,
+        match thread {
+            Ok(thread) => Self {
+                thread: Some(thread),
+                sample_tx: Some(sample_tx),
+                running,
+                name,
+            },
+            Err(e) => {
+                tracing::error!("Failed to spawn decoder thread for {name}: {e}");
+                // Return a handle that is already stopped — safe to call stop() on
+                running.store(false, Ordering::Relaxed);
+                Self {
+                    thread: None,
+                    sample_tx: None,
+                    running,
+                    name,
+                }
+            }
+        }
+    }
+
+    /// Returns true if the decoder thread is alive and accepting samples.
+    pub fn is_alive(&self) -> bool {
+        match &self.thread {
+            Some(t) => !t.is_finished() && self.running.load(Ordering::Relaxed),
+            None => false,
         }
     }
 

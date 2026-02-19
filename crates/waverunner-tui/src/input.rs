@@ -43,6 +43,19 @@ pub enum Action {
     CycleDecoderBack,
     CycleViewTab,
     CycleViewTabBack,
+    CycleMode,
+    CycleModeBack,
+    ToggleGeneralScan,
+    RunMeasurement,
+    ToggleTracking,
+    CaptureReference,
+    CompareReference,
+    ExportCsv,
+    AddBookmark,
+    ExportReport,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
 }
 
 /// Parse a frequency string entered by the user.
@@ -98,6 +111,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 KeyCode::Char('M') => Action::CycleDemodBack,
                 KeyCode::Char('d') => Action::CycleDecoder,
                 KeyCode::Char('D') => Action::CycleDecoderBack,
+                KeyCode::Char('p') => Action::CycleMode,
+                KeyCode::Char('P') => Action::CycleModeBack,
+                KeyCode::Char('g') => Action::ToggleGeneralScan,
                 KeyCode::Char('f') => {
                     app.input_mode = InputMode::FrequencyEntry(String::new());
                     Action::FrequencyEntry
@@ -121,6 +137,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 }
                 KeyCode::BackTab => Action::CycleViewTabBack,
                 KeyCode::Char('`') => Action::CycleViewTabBack,
+                KeyCode::Char('a') => Action::RunMeasurement,
+                KeyCode::Char('A') => Action::ToggleTracking,
+                KeyCode::Char('r') => Action::CaptureReference,
+                KeyCode::Char('c') => Action::CompareReference,
+                KeyCode::Char('x') => Action::ExportCsv,
+                KeyCode::Char('b') => Action::AddBookmark,
+                KeyCode::Char('R') => Action::ExportReport,
+                KeyCode::Char(']') => Action::VolumeUp,
+                KeyCode::Char('[') => Action::VolumeDown,
+                KeyCode::Char('\\') => Action::VolumeMute,
                 _ => Action::None,
             }
         }

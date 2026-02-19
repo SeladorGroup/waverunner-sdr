@@ -172,10 +172,10 @@ mod tests {
         let skip = 500;
         let mut cos_sum = 0.0f64;
         let mut sin_sum = 0.0f64;
-        for i in skip..n {
+        for (i, &sample) in audio.iter().enumerate().take(n).skip(skip) {
             let t = i as f64 / fs;
-            cos_sum += audio[i] as f64 * (2.0 * PI * bfo * t).cos();
-            sin_sum += audio[i] as f64 * (2.0 * PI * bfo * t).sin();
+            cos_sum += sample as f64 * (2.0 * PI * bfo * t).cos();
+            sin_sum += sample as f64 * (2.0 * PI * bfo * t).sin();
         }
         let tone_power = (cos_sum * cos_sum + sin_sum * sin_sum) / (n - skip) as f64;
 

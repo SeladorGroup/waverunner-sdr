@@ -16,13 +16,16 @@
 //!                              (bounded channels)
 //! ```
 
+pub mod checkpoint;
 pub mod manager;
 pub mod replay;
+pub mod timeline;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::analysis;
 use crate::dsp::detection::Detection;
 use crate::dsp::statistics::SignalStats;
 use crate::hardware::GainMode;
@@ -51,12 +54,46 @@ pub enum Command {
     StartDemod(DemodConfig),
     /// Stop audio demodulation.
     StopDemod,
+    /// Set audio output volume (0.0 = mute, 1.0 = unity, max 2.0).
+    SetVolume(f32),
+    /// Run an on-demand analysis computation.
+    RunAnalysis {
+        /// Correlation ID for matching request to response.
+        id: analysis::AnalysisId,
+        /// What analysis to perform.
+        request: analysis::AnalysisRequest,
+    },
+    /// Capture current spectrum as reference for comparison.
+    CaptureReference,
+    /// Start time-series tracking.
+    StartTracking,
+    /// Stop time-series tracking.
+    StopTracking,
+    /// Export data to file.
+    Export(analysis::export::ExportConfig),
+    /// Add an annotation to the session timeline.
+    AddAnnotation {
+        kind: String,
+        text: String,
+    },
+    /// Export the session timeline to a file.
+    ExportTimeline {
+        path: PathBuf,
+        format: TimelineExportFormat,
+    },
     /// Graceful shutdown.
     Shutdown,
 }
 
+/// Format for timeline export.
+#[derive(Debug, Clone, Copy)]
+pub enum TimelineExportFormat {
+    Json,
+    Csv,
+}
+
 /// Recording format.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub enum RecordFormat {
     /// Raw interleaved f32 IQ.
     RawCf32,
@@ -81,12 +118,23 @@ pub enum Event {
     Status(StatusUpdate),
     /// Visualization data from demodulator chain.
     DemodVis(DemodVisData),
+    /// Analysis computation completed.
+    AnalysisResult {
+        /// Correlation ID matching the request.
+        id: analysis::AnalysisId,
+        /// Analysis result data.
+        result: analysis::AnalysisResult,
+    },
+    /// Time-series tracking data update (~1 Hz).
+    TrackingUpdate(analysis::tracking::TrackingSnapshot),
+    /// Annotation was added to the session timeline (returns id).
+    AnnotationAdded(u64),
     /// Error from processing or hardware.
     Error(String),
 }
 
 /// Bundled spectrum and signal analysis for one processing block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SpectrumFrame {
     /// Power spectrum in dBFS, FFT-shifted (DC centered).
     pub spectrum_db: Vec<f32>,
@@ -106,8 +154,31 @@ pub struct SpectrumFrame {
     pub block_count: u64,
 }
 
+/// Pipeline health severity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum HealthStatus {
+    /// Pipeline operating normally.
+    Normal,
+    /// Elevated buffer occupancy or non-zero event drops.
+    Warning,
+    /// Severe backpressure or heavy load shedding active.
+    Critical,
+}
+
+/// Per-stage latency breakdown for one processing block.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct LatencyBreakdown {
+    pub dc_removal_us: u64,
+    pub fft_us: u64,
+    pub cfar_us: u64,
+    pub statistics_us: u64,
+    pub decoder_feed_us: u64,
+    pub demod_us: u64,
+    pub total_us: u64,
+}
+
 /// Session performance and status statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionStats {
     /// Total sample blocks processed.
     pub blocks_processed: u64,
@@ -119,14 +190,23 @@ pub struct SessionStats {
     pub throughput_msps: f64,
     /// CPU load estimate: processing_time / block_duration.
     pub cpu_load_percent: f32,
+    /// Current sample buffer occupancy (0 = empty, max = buffer_depth).
+    pub buffer_occupancy: u16,
+    /// Events dropped due to full event channel.
+    pub events_dropped: u64,
+    /// Pipeline health severity.
+    pub health: HealthStatus,
+    /// Per-stage latency breakdown.
+    pub latency: LatencyBreakdown,
 }
 
 /// A decoded protocol message from a decoder plugin.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DecodedMessage {
     /// Name of the decoder that produced this message.
     pub decoder: String,
     /// Timestamp when the message was decoded.
+    #[serde(skip)]
     pub timestamp: Instant,
     /// One-line human-readable summary.
     pub summary: String,
@@ -137,7 +217,7 @@ pub struct DecodedMessage {
 }
 
 /// Visualization data from the demodulation chain.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DemodVisData {
     /// Recent IQ constellation points (post-AGC, pre-demod).
     /// Decimated to ~256 points per block.
@@ -155,7 +235,7 @@ pub struct DemodVisData {
 }
 
 /// Informational status update.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum StatusUpdate {
     /// Hardware connected and streaming.
     Streaming,
@@ -171,10 +251,22 @@ pub enum StatusUpdate {
     FrequencyChanged(f64),
     /// Gain changed.
     GainChanged(GainMode),
+    /// Active mode changed.
+    ModeChanged { mode: String, state: String },
+    /// Analysis reference spectrum captured.
+    AnalysisReferenceCapture,
+    /// Time-series tracking started.
+    TrackingStarted,
+    /// Time-series tracking stopped.
+    TrackingStopped,
+    /// Load shedding level changed (0 = normal, 1 = light, 2 = heavy).
+    LoadShedding(u8),
+    /// Pipeline health status changed.
+    HealthChanged(HealthStatus),
 }
 
 /// Configuration for starting audio demodulation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DemodConfig {
     /// Demod mode: "am", "am-sync", "fm", "wfm", "wfm-stereo", "usb", "lsb", "cw"
     pub mode: String,
@@ -192,9 +284,16 @@ pub struct DemodConfig {
     pub output_wav: Option<PathBuf>,
 }
 
+fn default_schema_v1() -> u32 {
+    1
+}
+
 /// Configuration for creating a SessionManager.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionConfig {
+    /// Schema version for forward compatibility.
+    #[serde(default = "default_schema_v1")]
+    pub schema_version: u32,
     /// Hardware device index.
     pub device_index: u32,
     /// Initial center frequency in Hz.
@@ -235,6 +334,7 @@ mod tests {
     #[test]
     fn session_config_defaults() {
         let config = SessionConfig {
+            schema_version: 1,
             device_index: 0,
             frequency: 100e6,
             sample_rate: 2.048e6,

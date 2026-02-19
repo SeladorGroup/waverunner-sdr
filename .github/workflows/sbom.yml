@@ -1,0 +1,20 @@
+name: SBOM
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx || true
+      - name: Generate SBOM
+        run: cargo cyclonedx --all --format json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: "**/*bom.json"

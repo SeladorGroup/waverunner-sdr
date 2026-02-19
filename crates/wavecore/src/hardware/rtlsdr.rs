@@ -70,7 +70,11 @@ impl DeviceEnumerator for RtlSdrDevice {
         info!(index, "Opening RTL-SDR device");
 
         let (mut controller, reader) =
-            rtlsdr_mt::open(index).map_err(|()| HardwareError::DeviceNotFound(index))?;
+            rtlsdr_mt::open(index).map_err(|()| {
+                HardwareError::DriverError(format!(
+                    "Failed to open RTL-SDR at index {index} (device may be busy, missing, or inaccessible)"
+                ))
+            })?;
 
         // Get device name
         let devices: Vec<_> = rtlsdr_mt::devices().collect();
@@ -203,7 +207,7 @@ impl SdrDevice for RtlSdrDevice {
                         reason: "failed to disable AGC".into(),
                     })?;
                 // rtlsdr_mt uses tenths of dB
-                let gain_tenths = (db * 10.0) as i32;
+                let gain_tenths = (db * 10.0).round() as i32;
                 controller
                     .set_tuner_gain(gain_tenths)
                     .map_err(|()| HardwareError::GainError {

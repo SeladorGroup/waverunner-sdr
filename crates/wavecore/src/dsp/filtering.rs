@@ -502,9 +502,9 @@ mod tests {
         // Check correlation between output and expected sine
         let delay = ht.delay();
         let mut correlation = 0.0f32;
-        for i in delay + 10..n {
+        for (i, &output) in outputs.iter().enumerate().take(n).skip(delay + 10) {
             let expected = (2.0 * std::f32::consts::PI * freq * (i - delay) as f32).sin();
-            correlation += outputs[i] * expected;
+            correlation += output * expected;
         }
         correlation /= (n - delay - 10) as f32;
 

@@ -1,0 +1,10 @@
+name = "aviation"
+description = "ADS-B transponder monitoring at 1090 MHz"
+sample_rate = 2000000.0
+decoders = ["adsb"]
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 1090000000.0
+label = "ADS-B 1090 MHz"
+monitor = true

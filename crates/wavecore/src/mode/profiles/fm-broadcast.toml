@@ -1,0 +1,19 @@
+name = "fm-broadcast"
+description = "FM broadcast band scan with RDS decoding"
+sample_rate = 228000.0
+decoders = ["rds"]
+
+[[frequencies]]
+freq_hz = 88100000.0
+label = "88.1 FM"
+monitor = false
+dwell_ms = 3000
+
+[[frequencies]]
+freq_hz = 91100000.0
+label = "91.1 FM"
+monitor = false
+dwell_ms = 3000
+
+[demod]
+mode = "wfm"

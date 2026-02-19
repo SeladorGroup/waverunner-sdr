@@ -8,9 +8,16 @@ use serde::{Deserialize, Serialize};
 use crate::error::WaveError;
 use crate::types::{Sample, SampleRate};
 
+fn default_schema_v1() -> u32 {
+    1
+}
+
 /// IQ recording metadata sidecar (written as JSON alongside recordings).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordingMetadata {
+    /// Schema version for forward compatibility.
+    #[serde(default = "default_schema_v1")]
+    pub schema_version: u32,
     pub center_freq: f64,
     pub sample_rate: f64,
     pub gain: String,
@@ -206,6 +213,7 @@ mod tests {
         let path = dir.with_extension("raw");
 
         let meta = RecordingMetadata {
+            schema_version: 1,
             center_freq: 433.92e6,
             sample_rate: 2.048e6,
             gain: "auto".to_string(),

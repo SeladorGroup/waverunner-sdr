@@ -444,7 +444,7 @@ mod tests {
         // 48 samples × (1000/48000) cycles/sample = 1.0 cycle = 2π rad
         // But phase_rad wraps to [0, 2π), so it should be near 0 (after one full cycle)
         assert!(
-            phase < 0.1 || phase > 2.0 * PI - 0.1,
+            !(0.1..=2.0 * PI - 0.1).contains(&phase),
             "Phase after one cycle should be near 0: {phase:.4}"
         );
 
@@ -555,10 +555,10 @@ mod tests {
         for k in 0..n / 2 {
             let mut sum_re = 0.0f64;
             let mut sum_im = 0.0f64;
-            for i in 0..n {
+            for (i, sample) in samples.iter().enumerate() {
                 let angle = -2.0 * PI * k as f64 * i as f64 / n as f64;
-                sum_re += samples[i].re as f64 * angle.cos() - samples[i].im as f64 * angle.sin();
-                sum_im += samples[i].re as f64 * angle.sin() + samples[i].im as f64 * angle.cos();
+                sum_re += sample.re as f64 * angle.cos() - sample.im as f64 * angle.sin();
+                sum_im += sample.re as f64 * angle.sin() + sample.im as f64 * angle.cos();
             }
             let power = sum_re * sum_re + sum_im * sum_im;
 
@@ -583,7 +583,7 @@ mod tests {
         // Decimation should be approximately 2048000/16000 = 128
         let dec = ddc.decimation();
         assert!(
-            dec >= 120 && dec <= 136,
+            (120..=136).contains(&dec),
             "Decimation should be ~128, got {dec}"
         );
     }
