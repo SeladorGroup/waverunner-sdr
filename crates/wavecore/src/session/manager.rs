@@ -154,6 +154,10 @@ enum RecWriter {
 }
 
 impl RecWriter {
+    fn is_raw(&self) -> bool {
+        matches!(self, RecWriter::Raw(_))
+    }
+
     fn write_samples(&mut self, samples: &[Sample]) -> Result<(), String> {
         match self {
             RecWriter::Raw(w) => w.write_samples(samples).map_err(|e| e.to_string()),
@@ -167,6 +171,41 @@ impl RecWriter {
             RecWriter::Raw(w) => w.finish().map_err(|e| e.to_string()),
             RecWriter::Wav(w) => w.finish().map_err(|e| e.to_string()),
             RecWriter::SigMf(w) => w.finalize().map_err(|e| e.to_string()),
+        }
+    }
+}
+
+/// Best-effort write of a .sigmf-meta sidecar for raw cf32 recordings.
+fn write_sigmf_sidecar(path: &std::path::Path, center_freq: f64, sample_rate: f64) {
+    let meta = crate::sigmf::SigMfMeta {
+        global: crate::sigmf::SigMfGlobal {
+            datatype: "cf32_le".to_string(),
+            version: "1.0.0".to_string(),
+            sample_rate: Some(sample_rate),
+            description: None,
+            author: None,
+            hw: None,
+            recorder: Some("waverunner".to_string()),
+            sha512: None,
+            num_channels: None,
+        },
+        captures: vec![crate::sigmf::SigMfCapture {
+            sample_start: 0,
+            frequency: Some(center_freq),
+            datetime: None,
+        }],
+        annotations: Vec::new(),
+    };
+
+    let meta_path = path.with_extension("sigmf-meta");
+    match std::fs::File::create(&meta_path) {
+        Ok(file) => {
+            if let Err(e) = serde_json::to_writer_pretty(file, &meta) {
+                tracing::warn!("Failed to write SigMF sidecar: {e}");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to create SigMF sidecar {}: {e}", meta_path.display());
         }
     }
 }
@@ -702,6 +741,8 @@ fn run_processing_loop(
                 }
                 Command::StopRecord => {
                     if let Some(rec) = recording.take() {
+                        let was_raw = rec.writer.is_raw();
+                        let rec_path = rec.rec_path.clone();
                         let total = match rec.writer.finish() {
                             Ok(n) => n,
                             Err(e) => {
@@ -714,6 +755,9 @@ fn run_processing_loop(
                                 rec.samples_written
                             }
                         };
+                        if was_raw {
+                            write_sigmf_sidecar(&rec_path, config.frequency, config.sample_rate);
+                        }
                         timeline.log_event(TimelineEntry::RecordStop {
                             timestamp_s: timeline.elapsed_s(),
                             samples: total,
@@ -1008,7 +1052,12 @@ fn run_processing_loop(
                     .ok();
                 // Stop recording on error
                 if let Some(rec) = recording.take() {
+                    let was_raw = rec.writer.is_raw();
+                    let rec_path = rec.rec_path.clone();
                     let total = rec.writer.finish().unwrap_or(0);
+                    if was_raw {
+                        write_sigmf_sidecar(&rec_path, config.frequency, config.sample_rate);
+                    }
                     evt_tx
                         .send(Event::Status(StatusUpdate::RecordingStopped(total)))
                         .ok();
@@ -1301,7 +1350,12 @@ fn run_processing_loop(
 
     // Finalize recording if still active
     if let Some(rec) = recording.take() {
+        let was_raw = rec.writer.is_raw();
+        let rec_path = rec.rec_path.clone();
         let total = rec.writer.finish().unwrap_or(0);
+        if was_raw {
+            write_sigmf_sidecar(&rec_path, config.frequency, config.sample_rate);
+        }
         evt_tx
             .send(Event::Status(StatusUpdate::RecordingStopped(total)))
             .ok();
