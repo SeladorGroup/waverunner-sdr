@@ -10,6 +10,7 @@ pub mod mode;
 pub mod recording;
 pub mod session;
 pub mod sigmf;
+pub mod signal_identify;
 pub mod migration;
 pub mod slo;
 pub mod types;

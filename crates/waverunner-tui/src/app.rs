@@ -306,6 +306,9 @@ pub struct App {
 
     /// Regional frequency database for band identification.
     pub frequency_db: FrequencyDb,
+
+    /// Latest signal identification result (from [i] key).
+    pub identify_result: Option<wavecore::signal_identify::IdentifyResult>,
 }
 
 impl App {
@@ -352,6 +355,7 @@ impl App {
             events_dropped: 0,
             volume: 80,
             frequency_db: FrequencyDb::auto_detect(),
+            identify_result: None,
         }
     }
 

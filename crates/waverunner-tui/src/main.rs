@@ -372,6 +372,13 @@ fn main() -> Result<()> {
                         }
                         app.annotation_count += 1; // reuse counter for visual feedback
                     }
+                    Action::IdentifySignal => {
+                        let result = wavecore::signal_identify::identify_instant(
+                            app.frequency,
+                            &app.frequency_db,
+                        );
+                        app.identify_result = Some(result);
+                    }
                     Action::FrequencyEntry | Action::FrequencyCancel | Action::None => {}
                 }
             }

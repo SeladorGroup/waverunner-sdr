@@ -3,6 +3,7 @@ pub mod bands;
 pub mod bookmark;
 pub mod decode;
 pub mod demod;
+pub mod identify;
 pub mod info;
 pub mod listen;
 pub mod mode;
@@ -46,6 +47,8 @@ pub enum Command {
     Bands(bands::BandsArgs),
     /// Manage frequency bookmarks
     Bookmark(bookmark::BookmarkArgs),
+    /// Identify a signal by frequency (band lookup + classifier + decoder trial)
+    Identify(identify::IdentifyArgs),
 }
 
 pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
@@ -69,5 +72,6 @@ pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
             bookmark::run(args)?;
             Ok(())
         }
+        Command::Identify(args) => identify::run(args, device_index).await,
     }
 }
