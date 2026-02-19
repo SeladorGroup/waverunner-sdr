@@ -3,19 +3,17 @@ use std::time::Instant;
 use anyhow::Result;
 use crossbeam_channel::select;
 
+use wavecore::bookmarks::BookmarkStore;
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::demod::mode_defaults;
 use wavecore::frequency_db::FrequencyDb;
 use wavecore::session::manager::SessionManager;
 use wavecore::session::{Command, DemodConfig, Event, SessionConfig};
 
-use super::parse_frequency;
-
 #[derive(clap::Args)]
 pub struct ListenArgs {
-    /// Center frequency (supports suffixes: k, M, G)
-    #[arg(value_parser = parse_frequency)]
-    pub frequency: f64,
+    /// Center frequency (e.g. 98.3M) or bookmark name
+    pub frequency: String,
 
     /// Demodulation mode (auto-detected from frequency if omitted)
     #[arg(short, long)]
@@ -62,11 +60,30 @@ impl ListenMode {
 }
 
 pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
+    // Resolve frequency: try parsing as number first, then as bookmark name
+    let (frequency, bookmark_mode) = match wavecore::util::parse_frequency(&args.frequency) {
+        Ok(freq) => (freq, None),
+        Err(_) => {
+            let store = BookmarkStore::load();
+            if let Some(bm) = store.find(&args.frequency) {
+                let mode = bm.mode.clone();
+                (bm.frequency_hz, mode)
+            } else {
+                return Err(anyhow::anyhow!(
+                    "\"{}\" is not a valid frequency or bookmark name",
+                    args.frequency
+                ));
+            }
+        }
+    };
+
     let db = FrequencyDb::auto_detect();
 
     let (mode_string, band_name) = if let Some(mode) = args.mode {
         (mode.as_str().to_string(), "Manual".to_string())
-    } else if let Some(band) = db.lookup(args.frequency) {
+    } else if let Some(ref bm_mode) = bookmark_mode {
+        (bm_mode.clone(), format!("Bookmark: {}", args.frequency))
+    } else if let Some(band) = db.lookup(frequency) {
         (band.modulation.to_string(), band.label.to_string())
     } else {
         ("fm".to_string(), "Unknown Band".to_string())
@@ -85,7 +102,7 @@ pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
     let config = SessionConfig {
         schema_version: 1,
         device_index,
-        frequency: args.frequency,
+        frequency: frequency,
         sample_rate,
         gain: gain_mode,
         ppm: 0,
@@ -115,7 +132,7 @@ pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
         .send(Command::SetVolume(volume))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let freq_str = wavecore::util::format_freq(args.frequency);
+    let freq_str = wavecore::util::format_freq(frequency);
     println!(
         "Listening on {freq_str} | {band_name} | Mode: {} | Volume: {}%",
         mode_str.to_uppercase(),

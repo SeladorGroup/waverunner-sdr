@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod bookmarks;
 pub mod buffer;
 pub mod dsp;
 pub mod error;

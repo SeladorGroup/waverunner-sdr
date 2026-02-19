@@ -1,5 +1,6 @@
 pub mod analyze;
 pub mod bands;
+pub mod bookmark;
 pub mod decode;
 pub mod demod;
 pub mod info;
@@ -43,6 +44,8 @@ pub enum Command {
     Probe(probe::ProbeArgs),
     /// Show known frequency bands and channels for your region
     Bands(bands::BandsArgs),
+    /// Manage frequency bookmarks
+    Bookmark(bookmark::BookmarkArgs),
 }
 
 pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
@@ -60,6 +63,10 @@ pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
         Command::Probe(args) => probe::run(args).await,
         Command::Bands(args) => {
             bands::run(args)?;
+            Ok(())
+        }
+        Command::Bookmark(args) => {
+            bookmark::run(args)?;
             Ok(())
         }
     }

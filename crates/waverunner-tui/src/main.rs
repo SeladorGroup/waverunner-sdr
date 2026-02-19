@@ -354,6 +354,24 @@ fn main() -> Result<()> {
                         app.volume_toggle_mute();
                         session.send(Command::SetVolume(app.volume_f32())).ok();
                     }
+                    Action::SaveBookmark => {
+                        let name = format!("{:.3} MHz", app.frequency / 1e6);
+                        let mode = app.demod_mode.session_mode().map(|s| s.to_string());
+                        let decoder = app.active_decoder.clone();
+                        let bm = wavecore::bookmarks::Bookmark {
+                            name: name.clone(),
+                            frequency_hz: app.frequency,
+                            mode,
+                            decoder,
+                            notes: None,
+                        };
+                        let mut store = wavecore::bookmarks::BookmarkStore::load();
+                        store.add(bm);
+                        if let Err(e) = store.save() {
+                            tracing::error!("Failed to save bookmark: {e}");
+                        }
+                        app.annotation_count += 1; // reuse counter for visual feedback
+                    }
                     Action::FrequencyEntry | Action::FrequencyCancel | Action::None => {}
                 }
             }
