@@ -15,6 +15,7 @@ System dependencies:
 - On Arch, `redsea` and compatible ADS-B backends are typically AUR packages (`paru -S redsea dump1090-fa-git`)
 - `dump1090_rs` is not currently compatible with the ADS-B stdin bridge
 - Node.js 20+ and npm for the GUI frontend (`cd crates/waverunner-gui/frontend && npm ci`)
+- If the Tauri GUI trips a Wayland GTK/WebKit protocol error during local development, retry with `GDK_BACKEND=x11 cargo run -p waverunner-gui`
 
 Check optional backend availability with:
 
@@ -31,7 +32,7 @@ cargo fmt --all --check          # formatting
 cargo clippy --workspace --all-targets --all-features -- -D warnings  # lints
 cargo test --workspace --all-features   # tests
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps  # doc warnings
-cd crates/waverunner-gui/frontend && npm ci && npm audit --audit-level=high && npm run build  # GUI supply chain + bundle
+cd crates/waverunner-gui/frontend && npm ci && npm audit --audit-level=high && npm run check && npm run build  # GUI supply chain + bundle + Svelte type-check
 cd /path/to/waverunner-sdr && cargo package --allow-dirty --workspace --no-verify  # manifest/package hygiene
 ```
 

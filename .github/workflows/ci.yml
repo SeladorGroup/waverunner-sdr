@@ -34,6 +34,9 @@ jobs:
       - name: Frontend build
         working-directory: crates/waverunner-gui/frontend
         run: npm run build
+      - name: Frontend type check
+        working-directory: crates/waverunner-gui/frontend
+        run: npm run check
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

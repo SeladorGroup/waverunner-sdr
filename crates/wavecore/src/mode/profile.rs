@@ -41,6 +41,16 @@ pub struct FrequencyEntry {
     pub monitor: bool,
     /// Dwell time in milliseconds when cycling (for non-monitor frequencies).
     pub dwell_ms: Option<u64>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub decoder: Option<String>,
+    #[serde(default)]
+    pub priority: bool,
+    #[serde(default)]
+    pub locked_out: bool,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -72,13 +82,29 @@ pub struct AutoRecordConfig {
 // ============================================================================
 
 const AVIATION_TOML: &str = include_str!("profiles/aviation.toml");
+const APRS_TOML: &str = include_str!("profiles/aprs.toml");
+const AIS_TOML: &str = include_str!("profiles/ais.toml");
+const AIRBAND_TOML: &str = include_str!("profiles/airband.toml");
 const PAGER_TOML: &str = include_str!("profiles/pager.toml");
 const FM_BROADCAST_TOML: &str = include_str!("profiles/fm-broadcast.toml");
+const FM_SURVEY_TOML: &str = include_str!("profiles/fm-survey.toml");
+const ISM_SENSOR_HUNT_TOML: &str = include_str!("profiles/ism-sensor-hunt.toml");
+const NOAA_APT_TOML: &str = include_str!("profiles/noaa-apt.toml");
 
 /// Load all embedded (compiled-in) profiles.
 pub fn load_embedded_profiles() -> Vec<MissionProfile> {
     let mut profiles = Vec::new();
-    for toml_str in [AVIATION_TOML, PAGER_TOML, FM_BROADCAST_TOML] {
+    for toml_str in [
+        AVIATION_TOML,
+        APRS_TOML,
+        AIS_TOML,
+        AIRBAND_TOML,
+        PAGER_TOML,
+        FM_BROADCAST_TOML,
+        FM_SURVEY_TOML,
+        ISM_SENSOR_HUNT_TOML,
+        NOAA_APT_TOML,
+    ] {
         match toml::from_str::<MissionProfile>(toml_str) {
             Ok(p) => profiles.push(p),
             Err(e) => {
@@ -124,9 +150,9 @@ enum ProfileState {
     /// Initial state before first tick.
     Init,
     /// Staying on a single frequency.
-    Monitoring { freq: f64 },
+    Monitoring { index: usize },
     /// Cycling through multiple frequencies.
-    Cycling { index: usize, dwell_start: Instant },
+    Cycling { slot: usize, dwell_start: Instant },
 }
 
 /// Mode implementation that executes a MissionProfile.
@@ -157,9 +183,31 @@ impl ProfileMode {
         }
     }
 
+    fn effective_decoders(&self, entry: &FrequencyEntry) -> Vec<String> {
+        if entry.locked_out {
+            Vec::new()
+        } else if let Some(ref decoder) = entry.decoder {
+            vec![decoder.clone()]
+        } else {
+            self.profile.decoders.clone()
+        }
+    }
+
+    fn effective_demod(&self, entry: &FrequencyEntry) -> Option<ProfileDemod> {
+        if let Some(ref mode) = entry.mode {
+            Some(ProfileDemod {
+                mode: mode.clone(),
+                bandwidth: self.profile.demod.as_ref().and_then(|d| d.bandwidth),
+                squelch: self.profile.demod.as_ref().and_then(|d| d.squelch),
+            })
+        } else {
+            self.profile.demod.clone()
+        }
+    }
+
     /// Build initial setup commands: tune, enable decoders, start demod.
-    fn setup_commands(&self, freq: f64) -> Vec<Command> {
-        let mut cmds = vec![Command::Tune(freq)];
+    fn setup_commands(&self, entry: &FrequencyEntry) -> Vec<Command> {
+        let mut cmds = vec![Command::Tune(entry.freq_hz)];
 
         if let Some(rate) = self.profile.sample_rate {
             cmds.push(Command::SetSampleRate(rate));
@@ -173,13 +221,13 @@ impl ProfileMode {
             }
         }
 
-        for decoder in &self.profile.decoders {
+        for decoder in self.effective_decoders(entry) {
             cmds.push(Command::EnableDecoder(decoder.clone()));
         }
 
-        if let Some(ref demod) = self.profile.demod {
+        if let Some(demod) = self.effective_demod(entry) {
             cmds.push(Command::StartDemod(DemodConfig {
-                mode: demod.mode.clone(),
+                mode: demod.mode,
                 audio_rate: 48000,
                 bandwidth: demod.bandwidth,
                 bfo: None,
@@ -194,9 +242,69 @@ impl ProfileMode {
         cmds
     }
 
+    fn teardown_commands(&self, entry: &FrequencyEntry) -> Vec<Command> {
+        let mut cmds = Vec::new();
+        if self.effective_demod(entry).is_some() {
+            cmds.push(Command::StopDemod);
+        }
+        for decoder in self.effective_decoders(entry) {
+            cmds.push(Command::DisableDecoder(decoder));
+        }
+        cmds
+    }
+
+    fn active_frequency_count(&self) -> usize {
+        self.profile
+            .frequencies
+            .iter()
+            .filter(|entry| !entry.locked_out)
+            .count()
+    }
+
+    fn active_indices(&self) -> Vec<usize> {
+        self.profile
+            .frequencies
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, entry)| (!entry.locked_out).then_some(idx))
+            .collect()
+    }
+
+    fn first_active_index(&self) -> Option<usize> {
+        self.active_indices().into_iter().next()
+    }
+
+    /// Build the cycling order, revisiting priority entries more often.
+    fn cycle_schedule(&self) -> Vec<usize> {
+        let active = self.active_indices();
+        if active.len() <= 1 {
+            return active;
+        }
+
+        let priorities: Vec<usize> = active
+            .iter()
+            .copied()
+            .filter(|idx| self.profile.frequencies[*idx].priority)
+            .collect();
+
+        if priorities.is_empty() || priorities.len() == active.len() {
+            return active;
+        }
+
+        let mut schedule = active;
+        schedule.extend(priorities);
+        schedule
+    }
+
     /// Check if this profile is single-frequency (all entries are monitor=true, or only one entry).
     fn is_single_freq(&self) -> bool {
-        self.profile.frequencies.len() <= 1 || self.profile.frequencies.iter().all(|f| f.monitor)
+        self.active_frequency_count() <= 1
+            || self
+                .profile
+                .frequencies
+                .iter()
+                .filter(|entry| !entry.locked_out)
+                .all(|entry| entry.monitor)
     }
 }
 
@@ -208,24 +316,24 @@ impl Mode for ProfileMode {
     fn status(&self) -> String {
         match &self.state {
             ProfileState::Init => format!("{}: initializing", self.profile.name),
-            ProfileState::Monitoring { freq } => {
-                let label = self
-                    .profile
-                    .frequencies
-                    .iter()
-                    .find(|f| (f.freq_hz - freq).abs() < 1.0)
-                    .map(|f| f.label.as_str())
-                    .unwrap_or("unknown");
+            ProfileState::Monitoring { index } => {
+                let label = self.profile.frequencies[*index].label.as_str();
                 format!("{}: monitoring {}", self.profile.name, label)
             }
-            ProfileState::Cycling { index, .. } => {
-                let entry = &self.profile.frequencies[*index];
+            ProfileState::Cycling { slot, .. } => {
+                let schedule = self.cycle_schedule();
+                let Some(&index) = schedule.get(*slot) else {
+                    return format!("{}: cycling", self.profile.name);
+                };
+                let entry = &self.profile.frequencies[index];
+                let priority_marker = if entry.priority { " [priority]" } else { "" };
                 format!(
-                    "{}: cycling [{}/{}] {}",
+                    "{}: cycling [{}/{}] {}{}",
                     self.profile.name,
-                    index + 1,
-                    self.profile.frequencies.len(),
+                    slot + 1,
+                    schedule.len(),
                     entry.label,
+                    priority_marker,
                 )
             }
         }
@@ -238,17 +346,32 @@ impl Mode for ProfileMode {
                 let strong = dets.iter().any(|d| d.snr_db >= auto_rec.snr_trigger_db);
                 if strong && !self.recording {
                     self.recording = true;
-                    let (ext, rec_fmt) = match auto_rec.format.as_str() {
-                        "wav" => ("wav", crate::session::RecordFormat::Wav),
-                        "sigmf" => ("sigmf", crate::session::RecordFormat::SigMf),
-                        _ => ("cf32", crate::session::RecordFormat::RawCf32),
+                    let (path, rec_fmt) = match auto_rec.format.as_str() {
+                        "wav" => (
+                            std::path::PathBuf::from(&auto_rec.output_dir).join(format!(
+                                "{}-{}.wav",
+                                self.profile.name,
+                                chrono_timestamp(),
+                            )),
+                            crate::session::RecordFormat::Wav,
+                        ),
+                        "sigmf" => (
+                            std::path::PathBuf::from(&auto_rec.output_dir).join(format!(
+                                "{}-{}",
+                                self.profile.name,
+                                chrono_timestamp()
+                            )),
+                            crate::session::RecordFormat::SigMf,
+                        ),
+                        _ => (
+                            std::path::PathBuf::from(&auto_rec.output_dir).join(format!(
+                                "{}-{}.cf32",
+                                self.profile.name,
+                                chrono_timestamp(),
+                            )),
+                            crate::session::RecordFormat::RawCf32,
+                        ),
                     };
-                    let path = std::path::PathBuf::from(&auto_rec.output_dir).join(format!(
-                        "{}-{}.{}",
-                        self.profile.name,
-                        chrono_timestamp(),
-                        ext,
-                    ));
                     return vec![Command::StartRecord {
                         path,
                         format: rec_fmt,
@@ -269,34 +392,54 @@ impl Mode for ProfileMode {
                     return Vec::new();
                 }
 
-                let first_freq = self.profile.frequencies[0].freq_hz;
-                let cmds = self.setup_commands(first_freq);
-
                 if self.is_single_freq() {
-                    self.state = ProfileState::Monitoring { freq: first_freq };
+                    let Some(first_index) = self.first_active_index() else {
+                        return Vec::new();
+                    };
+                    let first_entry = &self.profile.frequencies[first_index];
+                    let cmds = self.setup_commands(first_entry);
+                    self.state = ProfileState::Monitoring { index: first_index };
+                    cmds
                 } else {
+                    let schedule = self.cycle_schedule();
+                    let Some(&first_index) = schedule.first() else {
+                        return Vec::new();
+                    };
+                    let first_entry = &self.profile.frequencies[first_index];
+                    let cmds = self.setup_commands(first_entry);
                     self.state = ProfileState::Cycling {
-                        index: 0,
+                        slot: 0,
                         dwell_start: Instant::now(),
                     };
+                    cmds
                 }
-                cmds
             }
             ProfileState::Monitoring { .. } => Vec::new(),
-            ProfileState::Cycling { index, dwell_start } => {
-                let entry = &self.profile.frequencies[*index];
+            ProfileState::Cycling { slot, dwell_start } => {
+                let schedule = self.cycle_schedule();
+                if schedule.len() <= 1 {
+                    return Vec::new();
+                }
+
+                let Some(&current_index) = schedule.get(*slot) else {
+                    return Vec::new();
+                };
+                let entry = &self.profile.frequencies[current_index];
                 let dwell = entry.dwell_ms.unwrap_or(3000);
 
                 if dwell_start.elapsed().as_millis() >= dwell as u128 {
-                    let next_index = (index + 1) % self.profile.frequencies.len();
-                    let next_freq = self.profile.frequencies[next_index].freq_hz;
+                    let next_slot = (*slot + 1) % schedule.len();
+                    let next_index = schedule[next_slot];
+                    let next_entry = &self.profile.frequencies[next_index];
 
                     self.state = ProfileState::Cycling {
-                        index: next_index,
+                        slot: next_slot,
                         dwell_start: Instant::now(),
                     };
 
-                    vec![Command::Tune(next_freq)]
+                    let mut cmds = self.teardown_commands(entry);
+                    cmds.extend(self.setup_commands(next_entry));
+                    cmds
                 } else {
                     Vec::new()
                 }
@@ -401,6 +544,85 @@ mod tests {
     }
 
     #[test]
+    fn profile_mode_revisits_priority_entries() {
+        let profile = MissionProfile {
+            schema_version: 1,
+            name: "priority-test".to_string(),
+            description: "priority scheduling".to_string(),
+            frequencies: vec![
+                FrequencyEntry {
+                    freq_hz: 100_000_000.0,
+                    label: "A".to_string(),
+                    monitor: false,
+                    dwell_ms: Some(0),
+                    mode: None,
+                    decoder: None,
+                    priority: false,
+                    locked_out: false,
+                    notes: None,
+                },
+                FrequencyEntry {
+                    freq_hz: 101_000_000.0,
+                    label: "B".to_string(),
+                    monitor: false,
+                    dwell_ms: Some(0),
+                    mode: None,
+                    decoder: None,
+                    priority: true,
+                    locked_out: false,
+                    notes: None,
+                },
+                FrequencyEntry {
+                    freq_hz: 102_000_000.0,
+                    label: "C".to_string(),
+                    monitor: false,
+                    dwell_ms: Some(0),
+                    mode: None,
+                    decoder: None,
+                    priority: false,
+                    locked_out: false,
+                    notes: None,
+                },
+            ],
+            decoders: Vec::new(),
+            sample_rate: None,
+            gain: None,
+            demod: None,
+            auto_record: None,
+        };
+
+        let mut mode = ProfileMode::new(profile);
+
+        let init = mode.tick();
+        assert!(
+            init.iter().any(
+                |cmd| matches!(cmd, Command::Tune(freq) if (*freq - 100_000_000.0).abs() < 1.0)
+            )
+        );
+
+        let first_hop = mode.tick();
+        assert!(
+            first_hop.iter().any(
+                |cmd| matches!(cmd, Command::Tune(freq) if (*freq - 101_000_000.0).abs() < 1.0)
+            )
+        );
+
+        let second_hop = mode.tick();
+        assert!(
+            second_hop.iter().any(
+                |cmd| matches!(cmd, Command::Tune(freq) if (*freq - 102_000_000.0).abs() < 1.0)
+            )
+        );
+
+        let third_hop = mode.tick();
+        assert!(
+            third_hop.iter().any(
+                |cmd| matches!(cmd, Command::Tune(freq) if (*freq - 101_000_000.0).abs() < 1.0)
+            )
+        );
+    }
+
+    #[test]
     fn auto_record_triggers() {
         let mut profile: MissionProfile = toml::from_str(AVIATION_TOML).unwrap();
         profile.auto_record = Some(AutoRecordConfig {
@@ -430,16 +652,62 @@ mod tests {
     #[test]
     fn embedded_profiles_load() {
         let profiles = load_embedded_profiles();
-        assert_eq!(profiles.len(), 3);
+        assert_eq!(profiles.len(), 9);
         let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"aviation"));
+        assert!(names.contains(&"aprs"));
+        assert!(names.contains(&"ais-watch"));
+        assert!(names.contains(&"airband-voice"));
         assert!(names.contains(&"pager"));
         assert!(names.contains(&"fm-broadcast"));
+        assert!(names.contains(&"fm-survey"));
+        assert!(names.contains(&"ism-sensor-hunt"));
+        assert!(names.contains(&"noaa-apt"));
     }
 
     #[test]
     fn invalid_toml_handled_gracefully() {
         let result = toml::from_str::<MissionProfile>("not valid toml {{{}");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn entry_overrides_apply_decoder_and_mode() {
+        let profile = MissionProfile {
+            schema_version: 1,
+            name: "test".to_string(),
+            description: "test".to_string(),
+            frequencies: vec![FrequencyEntry {
+                freq_hz: 144_390_000.0,
+                label: "APRS".to_string(),
+                monitor: true,
+                dwell_ms: None,
+                mode: Some("fm".to_string()),
+                decoder: Some("aprs".to_string()),
+                priority: false,
+                locked_out: false,
+                notes: None,
+            }],
+            decoders: vec!["adsb".to_string()],
+            sample_rate: Some(2_048_000.0),
+            gain: None,
+            demod: Some(ProfileDemod {
+                mode: "am".to_string(),
+                bandwidth: None,
+                squelch: None,
+            }),
+            auto_record: None,
+        };
+
+        let mut mode = ProfileMode::new(profile);
+        let cmds = mode.tick();
+        assert!(
+            cmds.iter()
+                .any(|cmd| matches!(cmd, Command::EnableDecoder(name) if name == "aprs"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|cmd| matches!(cmd, Command::StartDemod(cfg) if cfg.mode == "fm"))
+        );
     }
 }

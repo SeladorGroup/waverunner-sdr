@@ -84,7 +84,14 @@ pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
     } else if let Some(ref bm_mode) = bookmark_mode {
         (bm_mode.clone(), format!("Bookmark: {}", args.frequency))
     } else if let Some(band) = db.lookup(frequency) {
-        (band.modulation.to_string(), band.label.to_string())
+        let mode = db.demod_mode(frequency).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Automatic listen mode is unavailable for {} at {}. Use `decode` for protocol decoding or pass `--mode` explicitly.",
+                band.label,
+                wavecore::util::format_freq(frequency),
+            )
+        })?;
+        (mode.to_string(), band.label.to_string())
     } else {
         ("fm".to_string(), "Unknown Band".to_string())
     };

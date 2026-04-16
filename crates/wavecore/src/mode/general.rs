@@ -134,16 +134,16 @@ impl GeneralMode {
     }
 
     /// Determine the demod mode for a frequency when audio is enabled.
-    fn demod_mode_for_freq(&self, freq: f64) -> String {
+    fn demod_mode_for_freq(&self, freq: f64) -> Option<String> {
         if let Some(ref mode) = self.config.audio_mode {
-            return mode.clone();
+            return Some(mode.clone());
         }
         if let Some(ref db) = self.freq_db {
-            if let Some(mode) = db.demod_mode(freq) {
-                return mode.to_string();
+            if db.lookup(freq).is_some() {
+                return db.demod_mode(freq).map(|mode| mode.to_string());
             }
         }
-        "fm".to_string() // fallback
+        Some("fm".to_string())
     }
 
     /// Find the strongest detection above min_snr.
@@ -225,19 +225,22 @@ impl Mode for GeneralMode {
 
                             // Start audio demod if enabled
                             let demod_active = if self.config.enable_audio {
-                                let mode = self.demod_mode_for_freq(signal_freq);
-                                cmds.push(Command::StartDemod(DemodConfig {
-                                    mode,
-                                    audio_rate: 48000,
-                                    bandwidth: None,
-                                    bfo: None,
-                                    squelch: None,
-                                    deemph_us: None,
-                                    output_wav: None,
-                                    emit_visualization: false,
-                                    spectrum_update_interval_blocks: 8,
-                                }));
-                                true
+                                if let Some(mode) = self.demod_mode_for_freq(signal_freq) {
+                                    cmds.push(Command::StartDemod(DemodConfig {
+                                        mode,
+                                        audio_rate: 48000,
+                                        bandwidth: None,
+                                        bfo: None,
+                                        squelch: None,
+                                        deemph_us: None,
+                                        output_wav: None,
+                                        emit_visualization: false,
+                                        spectrum_update_interval_blocks: 8,
+                                    }));
+                                    true
+                                } else {
+                                    false
+                                }
                             } else {
                                 false
                             };
@@ -573,6 +576,31 @@ mod tests {
         assert!(
             has_start_demod,
             "Expected StartDemod when enable_audio is true"
+        );
+    }
+
+    #[test]
+    fn decoder_only_band_skips_audio_autostart() {
+        let mut config = test_config();
+        config.enable_audio = true;
+        config.scan_start = 1_090_000_000.0;
+        config.scan_end = 1_091_000_000.0;
+        let mut mode = GeneralMode::with_freq_db(
+            config,
+            Arc::new(FrequencyDb::new(crate::frequency_db::Region::NA)),
+        );
+
+        let det = make_detection(0.0, 20.0);
+        let cmds = mode.handle_event(&Event::Detections(vec![det]));
+
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::EnableDecoder(name) if name == "adsb")),
+            "Expected decoder autostart for ADS-B"
+        );
+        assert!(
+            !cmds.iter().any(|c| matches!(c, Command::StartDemod(_))),
+            "Decoder-only bands should not autostart audio demod"
         );
     }
 

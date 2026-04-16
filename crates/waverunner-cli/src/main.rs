@@ -29,6 +29,8 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    configure_sigpipe();
+
     let cli = Cli::parse();
 
     let filter = match cli.verbose {
@@ -51,3 +53,14 @@ async fn main() -> Result<()> {
 
     commands::execute(cli.command, cli.device).await
 }
+
+#[cfg(unix)]
+fn configure_sigpipe() {
+    // Match normal Unix CLI behavior when stdout is piped into a command like `head`.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_sigpipe() {}

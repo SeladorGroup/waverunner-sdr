@@ -28,6 +28,20 @@ pub struct RecordingMetadata {
     pub duration_secs: Option<f64>,
     pub device: String,
     pub samples_written: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub demod_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeline_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report_path: Option<String>,
 }
 
 impl RecordingMetadata {
@@ -222,6 +236,13 @@ mod tests {
             duration_secs: Some(10.0),
             device: "RTL-SDR".to_string(),
             samples_written: 1000,
+            label: Some("Weather".to_string()),
+            notes: None,
+            tags: vec!["test".to_string()],
+            demod_mode: None,
+            decoder: None,
+            timeline_path: None,
+            report_path: None,
         };
 
         // Create the recording file first so the sidecar path works

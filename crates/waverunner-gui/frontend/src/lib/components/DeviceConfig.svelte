@@ -37,6 +37,7 @@
     error = '';
     try {
       const config: SessionConfig = {
+        schema_version: 1,
         device_index: selectedIndex,
         frequency: parseFloat(freqStr) * 1e6,
         sample_rate: parseFloat(rateStr) * 1e6,
@@ -134,7 +135,7 @@
         <h3>Replay File</h3>
         <div class="form-row">
           <label for="dc-rpath">Path</label>
-          <input id="dc-rpath" type="text" bind:value={replayPath} placeholder="/path/to/recording.cf32" />
+          <input id="dc-rpath" type="text" bind:value={replayPath} placeholder="/path/to/recording.cf32 or capture.sigmf-data" />
         </div>
         <div class="form-row">
           <label for="dc-rrate">Rate (MS/s)</label>

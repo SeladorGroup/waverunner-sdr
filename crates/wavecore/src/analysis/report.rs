@@ -11,6 +11,10 @@ use serde::Serialize;
 
 use crate::session::timeline::Annotation;
 
+fn csv_escape(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 /// Metadata about the session.
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionMetadata {
@@ -29,16 +33,34 @@ pub struct ScanDetection {
     pub power_db: f32,
     pub snr_db: f32,
     pub bandwidth_hz: f64,
+    pub hits: u32,
+    pub peak_power_db: f32,
+    pub peak_snr_db: f32,
+    pub avg_snr_db: f32,
+    pub first_seen_pass: u32,
+    pub last_seen_pass: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_decoder: Option<String>,
 }
 
 /// Results from a frequency scan.
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanReport {
+    pub generated_at: String,
     pub start_freq: f64,
     pub end_freq: f64,
     pub step_hz: f64,
     pub dwell_ms: u64,
+    pub passes: u32,
     pub signals_found: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
     pub detections: Vec<ScanDetection>,
 }
 
@@ -115,20 +137,20 @@ pub fn export_session_report(
 
             // Decoded messages
             for msg in &report.decoded_messages {
-                let escaped = msg.summary.replace('"', "\"\"");
-                writeln!(
-                    file,
-                    "decoded,{},\"[{}] {}\"",
-                    msg.elapsed_ms, msg.decoder, escaped
-                )
-                .map_err(|e| format!("Write error: {e}"))?;
+                let summary = format!("[{}] {}", msg.decoder, msg.summary);
+                writeln!(file, "decoded,{},{}", msg.elapsed_ms, csv_escape(&summary))
+                    .map_err(|e| format!("Write error: {e}"))?;
             }
 
             // Annotations
             for ann in &report.annotations {
-                let escaped = ann.text.replace('"', "\"\"");
-                writeln!(file, "annotation,{:.3},\"{}\"", ann.timestamp_s, escaped)
-                    .map_err(|e| format!("Write error: {e}"))?;
+                writeln!(
+                    file,
+                    "annotation,{:.3},{}",
+                    ann.timestamp_s,
+                    csv_escape(&ann.text)
+                )
+                .map_err(|e| format!("Write error: {e}"))?;
             }
         }
         _ => return Err(format!("Unsupported format: {format}")),
@@ -157,14 +179,30 @@ pub fn export_scan_report(
             let mut file =
                 std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-            writeln!(file, "frequency_hz,power_db,snr_db,bandwidth_hz")
+            writeln!(
+                file,
+                "frequency_hz,power_db,snr_db,bandwidth_hz,hits,peak_power_db,peak_snr_db,avg_snr_db,first_seen_pass,last_seen_pass,label,service,suggested_mode,suggested_decoder"
+            )
                 .map_err(|e| format!("Write error: {e}"))?;
 
             for det in &report.detections {
                 writeln!(
                     file,
-                    "{:.1},{:.1},{:.1},{:.1}",
-                    det.frequency_hz, det.power_db, det.snr_db, det.bandwidth_hz
+                    "{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{:.1},{},{},{},{},{},{}",
+                    det.frequency_hz,
+                    det.power_db,
+                    det.snr_db,
+                    det.bandwidth_hz,
+                    det.hits,
+                    det.peak_power_db,
+                    det.peak_snr_db,
+                    det.avg_snr_db,
+                    det.first_seen_pass,
+                    det.last_seen_pass,
+                    csv_escape(det.label.as_deref().unwrap_or("")),
+                    csv_escape(det.service.as_deref().unwrap_or("")),
+                    csv_escape(det.suggested_mode.as_deref().unwrap_or("")),
+                    csv_escape(det.suggested_decoder.as_deref().unwrap_or("")),
                 )
                 .map_err(|e| format!("Write error: {e}"))?;
             }
@@ -240,23 +278,46 @@ mod tests {
     #[test]
     fn scan_report_json() {
         let report = ScanReport {
+            generated_at: "2026-02-15T12:00:00Z".to_string(),
             start_freq: 88e6,
             end_freq: 108e6,
             step_hz: 1e6,
             dwell_ms: 100,
+            passes: 2,
             signals_found: 2,
+            region: Some("North America".to_string()),
             detections: vec![
                 ScanDetection {
                     frequency_hz: 91.5e6,
                     power_db: -30.0,
                     snr_db: 20.0,
                     bandwidth_hz: 200e3,
+                    hits: 2,
+                    peak_power_db: -30.0,
+                    peak_snr_db: 21.0,
+                    avg_snr_db: 20.5,
+                    first_seen_pass: 1,
+                    last_seen_pass: 2,
+                    label: Some("FM Broadcast".to_string()),
+                    service: Some("broadcast".to_string()),
+                    suggested_mode: Some("wfm".to_string()),
+                    suggested_decoder: Some("rds".to_string()),
                 },
                 ScanDetection {
                     frequency_hz: 101.1e6,
                     power_db: -25.0,
                     snr_db: 25.0,
                     bandwidth_hz: 150e3,
+                    hits: 1,
+                    peak_power_db: -25.0,
+                    peak_snr_db: 25.0,
+                    avg_snr_db: 25.0,
+                    first_seen_pass: 2,
+                    last_seen_pass: 2,
+                    label: Some("FM Broadcast".to_string()),
+                    service: Some("broadcast".to_string()),
+                    suggested_mode: Some("wfm".to_string()),
+                    suggested_decoder: Some("rds".to_string()),
                 },
             ],
         };
@@ -275,16 +336,29 @@ mod tests {
     #[test]
     fn scan_report_csv() {
         let report = ScanReport {
+            generated_at: "2026-02-15T12:00:00Z".to_string(),
             start_freq: 88e6,
             end_freq: 108e6,
             step_hz: 1e6,
             dwell_ms: 100,
+            passes: 1,
             signals_found: 1,
+            region: Some("North America".to_string()),
             detections: vec![ScanDetection {
                 frequency_hz: 95.5e6,
                 power_db: -35.0,
                 snr_db: 15.0,
                 bandwidth_hz: 100e3,
+                hits: 1,
+                peak_power_db: -35.0,
+                peak_snr_db: 15.0,
+                avg_snr_db: 15.0,
+                first_seen_pass: 1,
+                last_seen_pass: 1,
+                label: Some("FM Broadcast".to_string()),
+                service: Some("broadcast".to_string()),
+                suggested_mode: Some("wfm".to_string()),
+                suggested_decoder: Some("rds".to_string()),
             }],
         };
         let path = temp_path("test_scan_report.csv");
@@ -292,7 +366,7 @@ mod tests {
         assert!(result.is_ok());
 
         let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(contents.starts_with("frequency_hz,power_db,snr_db,bandwidth_hz\n"));
+        assert!(contents.starts_with("frequency_hz,power_db,snr_db,bandwidth_hz,hits"));
         assert!(contents.lines().count() == 2); // header + 1 detection
 
         std::fs::remove_file(&path).ok();

@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -15,6 +15,9 @@ import type {
   AnalysisResult,
   AnalysisEvent,
   TrackingSnapshot,
+  Bookmark,
+  CaptureRecord,
+  DecoderInfo,
 } from "../types";
 
 // Connection state
@@ -23,6 +26,9 @@ export const frequency = writable(100e6);
 export const sampleRate = writable(2.048e6);
 export const gain = writable<GainMode>("Auto");
 export const demodMode = writable("OFF");
+export const enabledDecoders = writable<string[]>([]);
+export const recordingActive = writable(false);
+export const recordingPath = writable<string | null>(null);
 
 // DSP state
 export const spectrumData = writable<number[]>([]);
@@ -55,6 +61,18 @@ export const sessionStats = writable<SessionStats>({
   processing_time_us: 0,
   throughput_msps: 0,
   cpu_load_percent: 0,
+  buffer_occupancy: 0,
+  events_dropped: 0,
+  health: "Normal",
+  latency: {
+    dc_removal_us: 0,
+    fft_us: 0,
+    cfar_us: 0,
+    statistics_us: 0,
+    decoder_feed_us: 0,
+    demod_us: 0,
+    total_us: 0,
+  },
 });
 
 // Decoded messages
@@ -92,6 +110,52 @@ export const showPeakHold = writable(true);
 
 // Peak hold state
 let peakHoldData: number[] = [];
+
+function resetSessionState(): void {
+  connected.set(false);
+  demodMode.set("OFF");
+  enabledDecoders.set([]);
+  recordingActive.set(false);
+  recordingPath.set(null);
+  spectrumData.set([]);
+  waterfallRows.set([]);
+  peakHoldData = [];
+  peakHold.set([]);
+  detections.set([]);
+  decodedMessages.set([]);
+  constellation.set([]);
+  pllLocked.set(false);
+  pllFrequencyHz.set(0);
+  pllPhaseError.set(0);
+  agcGainDb.set(0);
+  statusMessage.set("");
+  errorMessage.set("");
+  activeMode.set("");
+  modeStatus.set("");
+  analysisResult.set(null);
+  trackingData.set(null);
+  trackingActive.set(false);
+  referenceCapture.set(false);
+  sessionStats.set({
+    blocks_processed: 0,
+    blocks_dropped: 0,
+    processing_time_us: 0,
+    throughput_msps: 0,
+    cpu_load_percent: 0,
+    buffer_occupancy: 0,
+    events_dropped: 0,
+    health: "Normal",
+    latency: {
+      dc_removal_us: 0,
+      fft_us: 0,
+      cfar_us: 0,
+      statistics_us: 0,
+      decoder_feed_us: 0,
+      demod_us: 0,
+      total_us: 0,
+    },
+  });
+}
 
 export function setupEventListeners(): void {
   listen<SpectrumFrame>("wr:spectrum", (event) => {
@@ -164,19 +228,53 @@ export function setupEventListeners(): void {
     if (status === "Streaming") {
       statusMessage.set("Streaming");
       connected.set(true);
+    } else if (status === "TrackingStarted") {
+      trackingActive.set(true);
+      statusMessage.set("Tracking started");
+    } else if (status === "TrackingStopped") {
+      trackingActive.set(false);
+      statusMessage.set("Tracking stopped");
+    } else if (status === "AnalysisReferenceCapture") {
+      referenceCapture.set(true);
+      statusMessage.set("Reference capture saved");
     } else if (typeof status === "object") {
       if ("FrequencyChanged" in status) {
         frequency.set(status.FrequencyChanged);
       } else if ("GainChanged" in status) {
         gain.set(status.GainChanged);
       } else if ("DecoderEnabled" in status) {
+        enabledDecoders.update((names) =>
+          names.includes(status.DecoderEnabled)
+            ? names
+            : [...names, status.DecoderEnabled],
+        );
         statusMessage.set(`Decoder: ${status.DecoderEnabled}`);
       } else if ("DecoderDisabled" in status) {
+        enabledDecoders.update((names) =>
+          names.filter((name) => name !== status.DecoderDisabled),
+        );
         statusMessage.set(`Decoder off`);
       } else if ("RecordingStarted" in status) {
+        recordingActive.set(true);
+        recordingPath.set(status.RecordingStarted);
         statusMessage.set(`Recording...`);
       } else if ("RecordingStopped" in status) {
+        recordingActive.set(false);
+        recordingPath.set(null);
         statusMessage.set(`Recorded ${status.RecordingStopped} samples`);
+      } else if ("TimelineExported" in status) {
+        statusMessage.set(`Timeline saved: ${status.TimelineExported}`);
+      } else if ("ModeChanged" in status) {
+        activeMode.set(status.ModeChanged.mode);
+        modeStatus.set(status.ModeChanged.state);
+      } else if ("LoadShedding" in status) {
+        statusMessage.set(
+          status.LoadShedding > 0
+            ? `Load shedding: level ${status.LoadShedding}`
+            : "Load shedding cleared",
+        );
+      } else if ("HealthChanged" in status) {
+        statusMessage.set(`Pipeline health: ${status.HealthChanged}`);
       }
     }
   });
@@ -201,6 +299,9 @@ export function setupEventListeners(): void {
 
 // Command wrappers
 export async function connectDevice(config: SessionConfig): Promise<void> {
+  if (get(connected)) {
+    await disconnectDevice();
+  }
   await invoke("connect_device", { config });
   connected.set(true);
   frequency.set(config.frequency);
@@ -210,11 +311,7 @@ export async function connectDevice(config: SessionConfig): Promise<void> {
 
 export async function disconnectDevice(): Promise<void> {
   await invoke("disconnect_device");
-  connected.set(false);
-  spectrumData.set([]);
-  waterfallRows.set([]);
-  peakHoldData = [];
-  peakHold.set([]);
+  resetSessionState();
 }
 
 export async function replayFile(
@@ -222,6 +319,9 @@ export async function replayFile(
   sample_rate: number,
   freq: number,
 ): Promise<void> {
+  if (get(connected)) {
+    await disconnectDevice();
+  }
   await invoke("replay_file", {
     path,
     sampleRate: sample_rate,
@@ -238,10 +338,12 @@ export async function cmdTune(freq: number): Promise<void> {
 
 export async function cmdSetGain(mode: GainMode): Promise<void> {
   await invoke("set_gain", { mode });
+  gain.set(mode);
 }
 
 export async function cmdSetSampleRate(rate: number): Promise<void> {
   await invoke("set_sample_rate", { rate });
+  sampleRate.set(rate);
 }
 
 export async function cmdStartDemod(config: DemodConfig): Promise<void> {
@@ -271,12 +373,44 @@ export async function cmdStopRecord(): Promise<void> {
   await invoke("stop_record");
 }
 
+export async function generateCapturePath(
+  format: string,
+  label?: string,
+): Promise<string> {
+  return await invoke("generate_capture_path", { format, label });
+}
+
+export async function listRecentCaptures(limit?: number): Promise<CaptureRecord[]> {
+  return await invoke("list_recent_captures", { limit });
+}
+
+export async function listBookmarks(): Promise<Bookmark[]> {
+  return await invoke("list_bookmarks");
+}
+
+export async function saveCurrentBookmark(
+  name: string,
+  mode?: string | null,
+  decoder?: string | null,
+  notes?: string | null,
+): Promise<void> {
+  await invoke("save_current_bookmark", { name, mode, decoder, notes });
+}
+
+export async function removeBookmark(name: string): Promise<void> {
+  await invoke("remove_bookmark", { name });
+}
+
 export async function getAvailableDevices(): Promise<unknown[]> {
   return await invoke("get_available_devices");
 }
 
 export async function getAvailableDecoders(): Promise<string[]> {
   return await invoke("get_available_decoders");
+}
+
+export async function getDecoderCatalog(): Promise<DecoderInfo[]> {
+  return await invoke("get_decoder_catalog");
 }
 
 // Mode commands

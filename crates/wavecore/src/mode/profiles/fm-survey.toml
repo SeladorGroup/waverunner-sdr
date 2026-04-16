@@ -1,0 +1,30 @@
+name = "fm-survey"
+description = "RDS-friendly FM broadcast survey with audio demod defaults"
+sample_rate = 1024000.0
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 88100000.0
+label = "88.1 FM"
+monitor = false
+dwell_ms = 5000
+decoder = "rds"
+mode = "wfm"
+
+[[frequencies]]
+freq_hz = 94900000.0
+label = "94.9 FM"
+monitor = false
+dwell_ms = 5000
+decoder = "rds"
+mode = "wfm"
+priority = true
+
+[[frequencies]]
+freq_hz = 101100000.0
+label = "101.1 FM"
+monitor = false
+dwell_ms = 5000
+decoder = "rds"
+mode = "wfm"
+

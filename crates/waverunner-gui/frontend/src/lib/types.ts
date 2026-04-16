@@ -71,12 +71,17 @@ export interface SessionStats {
 
 export type StatusUpdate =
   | "Streaming"
+  | "AnalysisReferenceCapture"
+  | "TrackingStarted"
+  | "TrackingStopped"
   | { RecordingStarted: string }
   | { RecordingStopped: number }
+  | { TimelineExported: string }
   | { DecoderEnabled: string }
   | { DecoderDisabled: string }
   | { FrequencyChanged: number }
   | { GainChanged: GainMode }
+  | { ModeChanged: { mode: string; state: string } }
   | { LoadShedding: number }
   | { HealthChanged: HealthStatus };
 
@@ -91,6 +96,44 @@ export interface DeviceInfo {
   sample_rate_range: [number, number];
   gain_range: [number, number];
   available_gains: number[];
+}
+
+export interface Bookmark {
+  name: string;
+  frequency_hz: number;
+  mode: string | null;
+  decoder: string | null;
+  notes: string | null;
+}
+
+export interface CaptureRecord {
+  schema_version: number;
+  id: string;
+  created_at: string;
+  path: string;
+  metadata_path: string | null;
+  timeline_path: string | null;
+  report_path: string | null;
+  label: string | null;
+  notes: string | null;
+  tags: string[];
+  center_freq: number;
+  sample_rate: number;
+  format: string;
+  duration_secs: number | null;
+  size_bytes: number | null;
+  demod_mode: string | null;
+  decoder: string | null;
+  source: "LiveRecord" | "Import" | "ReplayExport";
+}
+
+export interface DecoderInfo {
+  name: string;
+  backend: string;
+  summary: string;
+  required_tool: string | null;
+  ready: boolean;
+  resolved_command: string | null;
 }
 
 export interface SessionConfig {
@@ -242,14 +285,27 @@ export interface ScanDetection {
   power_db: number;
   snr_db: number;
   bandwidth_hz: number;
+  hits: number;
+  peak_power_db: number;
+  peak_snr_db: number;
+  avg_snr_db: number;
+  first_seen_pass: number;
+  last_seen_pass: number;
+  label: string | null;
+  service: string | null;
+  suggested_mode: string | null;
+  suggested_decoder: string | null;
 }
 
 export interface ScanReport {
+  generated_at: string;
   start_freq: number;
   end_freq: number;
   step_hz: number;
   dwell_ms: number;
+  passes: number;
   signals_found: number;
+  region: string | null;
   detections: ScanDetection[];
 }
 

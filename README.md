@@ -33,8 +33,8 @@ If your goal is: "give me a coherent SDR platform I can inspect, extend, and run
 - **See everything** — real-time spectrum display, waterfall plots, signal detection (CFAR)
 - **Decode a broad set of protocol targets** — POCSAG pagers, ADS-B aircraft, RDS radio text, FLEX, EAS/SAME alert headers, APRS ham radio, AIS maritime, OOK devices (weather stations, TPMS, remotes), NOAA satellite images, plus an `rtl_433` bridge for 250+ additional device types
 - **Analyze signals** — power/bandwidth measurement, burst detection, modulation estimation, bitstream inspection, spectral comparison, signal tracking over time
-- **Record and export** — raw IQ capture with SigMF metadata, export to CSV/JSON/TSV/PNG
-- **Scan intelligently** — auto-scanner with audio output, operating profiles (aviation, pager, FM broadcast), frequency bookmarks, ITU band database with region auto-detection
+- **Record and replay as one workflow** — raw IQ capture with metadata, recent-capture indexing, session timeline export, and replay-first analysis
+- **Scan intelligently** — repeated-pass scan reports, bookmark export, generated watchlist profiles, operating profiles (aviation, APRS, AIS, pager, FM survey, NOAA APT, ISM sensor hunt), frequency bookmarks, ITU band database with region auto-detection
 - **Stay healthy** — pipeline health monitoring, session checkpoints, latency tracking, load shedding under pressure
 
 ## Why Rust?
@@ -67,9 +67,16 @@ To build the desktop GUI bundle from a clean clone:
 ```bash
 cd crates/waverunner-gui/frontend
 npm ci
+npm run check
 npm run build
 cd ../../..
 cargo build -p waverunner-gui
+```
+
+If the GUI fails to start on Wayland with a GTK/WebKit protocol error, try the X11 fallback that was validated during the beta hardening pass:
+
+```bash
+GDK_BACKEND=x11 cargo run -p waverunner-gui
 ```
 
 No hardware? No problem — build without RTL-SDR/audio dependencies and use replay mode with recorded IQ files:
@@ -84,30 +91,37 @@ cargo build --release --no-default-features
 # Check which optional decoder backends are available
 waverunner tools
 
-# Watch the spectrum in your terminal
-waverunner tui --freq 162.55M
+# Show connected hardware and backend tool availability
+waverunner info
+waverunner tools
 
-# Decode pager traffic
-waverunner listen --freq 152.48M --decoder pocsag
+# Inspect a signal with spectrum/detections
+waverunner tune 162.55M
 
-# Track aircraft overhead
-waverunner listen --freq 1090M --decoder adsb
+# Listen to a known signal
+waverunner listen 99.9M --mode wfm
 
-# Auto-scan with audio — police scanner style
-waverunner mode general --listen
+# Decode ADS-B or RDS
+waverunner decode adsb -f 1090M
+waverunner decode rds -f 94.9M
 
-# Record raw IQ for later analysis
-waverunner record --freq 433.92M --duration 30
+# Auto-scan or run a saved/profiled watchlist
+waverunner mode general --listen --start 118M --end 137M
+waverunner mode run ais-watch
+
+# Record raw IQ with notes and timeline export
+waverunner record 433.92M -o capture.cf32 -D 30 --label "sensor hunt" --timeline --tag 433
+
+# Inspect recent captures or ask for a default capture path
+waverunner library list
+waverunner library default-path --format raw --label test-run
 
 # Analyze a recording
 waverunner analyze capture.cf32 measure
 waverunner analyze capture.cf32 modulation
 
-# Replay a recording through the TUI
-waverunner tui --replay capture.cf32
-
-# What's on this frequency?
-waverunner identify 433.92M
+# What's on this frequency? Optionally grab a short capture and report.
+waverunner identify 433.92M --capture-secs 5 --report identify.json
 
 # List known frequency allocations for your region
 waverunner bands
@@ -116,9 +130,9 @@ waverunner bands
 If you are brand new, the simplest path is:
 
 1. Run `waverunner tools` to see what optional decoder backends are actually available.
-2. Run `waverunner tui --freq 162.55M` or another known local signal to get comfortable with the spectrum and waterfall.
-3. Run `waverunner scan` or `waverunner mode general --listen` to find active channels.
-4. Record a short capture with `waverunner record` and replay it later instead of trying to learn everything live.
+2. Run `waverunner tune 162.55M` or `waverunner listen 99.9M --mode wfm` on a known local signal.
+3. Run `waverunner scan 88M 108M --passes 2 --top 10 --save-profile fm.toml` or `waverunner mode general --listen` to find active channels.
+4. Record a short capture with `waverunner record` and then inspect it with `waverunner library list` or `waverunner analyze`.
 5. Use `waverunner identify` or `waverunner decode list` when you want help choosing the next step.
 
 ## Architecture

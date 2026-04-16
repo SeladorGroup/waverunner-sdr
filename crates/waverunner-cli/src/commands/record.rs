@@ -1,12 +1,14 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Result;
 
+use wavecore::captures::{CaptureCatalog, CaptureSource};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::recording::RecordingMetadata;
 use wavecore::session::manager::SessionManager;
 use wavecore::session::{Command, Event, RecordFormat, SessionConfig, StatusUpdate};
+use wavecore::util::utc_timestamp_now;
 
 use super::parse_frequency;
 
@@ -39,6 +41,26 @@ pub struct RecordArgs {
     /// PPM frequency correction
     #[arg(long, default_value = "0")]
     pub ppm: i32,
+
+    /// Optional human-readable label stored alongside the recording
+    #[arg(long)]
+    pub label: Option<String>,
+
+    /// Optional notes stored alongside the recording
+    #[arg(long)]
+    pub notes: Option<String>,
+
+    /// Tags stored alongside the recording (repeatable)
+    #[arg(long = "tag")]
+    pub tags: Vec<String>,
+
+    /// Export the session timeline next to the recording
+    #[arg(long)]
+    pub timeline: bool,
+
+    /// Explicit timeline output path (defaults to `<recording>.timeline.json`)
+    #[arg(long)]
+    pub timeline_output: Option<PathBuf>,
 }
 
 pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
@@ -93,7 +115,6 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
         tokio::signal::ctrl_c().await.ok();
         eprintln!("\nStopping recording...");
         cmd_tx.send(Command::StopRecord).ok();
-        cmd_tx.send(Command::Shutdown).ok();
     });
 
     // Duration timer (uses std::thread to avoid needing tokio time feature)
@@ -104,20 +125,46 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
             std::thread::sleep(std::time::Duration::from_secs_f64(duration));
             eprintln!("\nDuration reached.");
             cmd_tx.send(Command::StopRecord).ok();
-            cmd_tx.send(Command::Shutdown).ok();
         });
     }
 
     let start = Instant::now();
     let sample_rate = args.sample_rate;
     let mut total_samples = 0u64;
+    let timeline_path = if args.timeline {
+        Some(
+            args.timeline_output
+                .clone()
+                .unwrap_or_else(|| default_timeline_path(&args.output)),
+        )
+    } else {
+        None
+    };
+    let mut recording_stopped = false;
+    let mut timeline_exported = timeline_path.is_none();
 
     // Event loop — display progress, wait for recording to stop
     for event in events.iter() {
         match event {
             Event::Status(StatusUpdate::RecordingStopped(samples)) => {
                 total_samples = samples;
-                break;
+                recording_stopped = true;
+                if let Some(path) = timeline_path.clone() {
+                    session
+                        .send(Command::ExportTimeline {
+                            path,
+                            format: wavecore::session::TimelineExportFormat::Json,
+                        })
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                } else {
+                    break;
+                }
+            }
+            Event::Status(StatusUpdate::TimelineExported(_)) => {
+                timeline_exported = true;
+                if recording_stopped {
+                    break;
+                }
             }
             Event::Stats(_) => {
                 // Estimate progress from elapsed time
@@ -142,7 +189,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     let elapsed = start.elapsed().as_secs_f64();
 
     // Write metadata sidecar
-    let timestamp = chrono_lite_timestamp();
+    let timestamp = utc_timestamp_now();
     let metadata = RecordingMetadata {
         schema_version: 1,
         center_freq: args.frequency,
@@ -157,8 +204,23 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
         duration_secs: Some(elapsed),
         device: "rtlsdr".to_string(),
         samples_written: total_samples,
+        label: args.label.clone(),
+        notes: args.notes.clone(),
+        tags: args.tags.clone(),
+        demod_mode: None,
+        decoder: None,
+        timeline_path: timeline_path
+            .filter(|_| timeline_exported)
+            .map(|path| path.display().to_string()),
+        report_path: None,
     };
     metadata.write_sidecar(&args.output)?;
+
+    let mut catalog = CaptureCatalog::load();
+    catalog.register(&args.output, &metadata, CaptureSource::LiveRecord);
+    if let Err(e) = catalog.save() {
+        eprintln!("Failed to update recent capture catalog: {e}");
+    }
 
     session.shutdown();
     eprintln!(
@@ -171,51 +233,10 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     Ok(())
 }
 
-/// Simple ISO 8601 timestamp without pulling in chrono.
-fn chrono_lite_timestamp() -> String {
-    use std::time::SystemTime;
-    let duration = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = duration.as_secs();
-
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-
-    let mut year = 1970i64;
-    let mut remaining_days = days as i64;
-
-    loop {
-        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-
-    let days_in_months: [i64; 12] = if is_leap_year(year) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 0;
-    for (i, &days) in days_in_months.iter().enumerate() {
-        if remaining_days < days {
-            month = i + 1;
-            break;
-        }
-        remaining_days -= days;
-    }
-    let day = remaining_days + 1;
-
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
-}
-
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+fn default_timeline_path(recording_path: &Path) -> PathBuf {
+    let file_name = recording_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("capture");
+    recording_path.with_file_name(format!("{file_name}.timeline.json"))
 }

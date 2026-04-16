@@ -1,6 +1,6 @@
 name = "fm-broadcast"
 description = "FM broadcast band scan with RDS decoding"
-sample_rate = 228000.0
+sample_rate = 1024000.0
 decoders = ["rds"]
 
 [[frequencies]]

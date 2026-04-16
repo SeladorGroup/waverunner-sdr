@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::State;
+use wavecore::bookmarks::{Bookmark, BookmarkStore};
+use wavecore::captures::{CaptureCatalog, CaptureRecord, default_capture_path};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::hardware::GainMode;
 use wavecore::mode::ModeController;
@@ -13,8 +15,8 @@ use wavecore::session::manager::SessionManager;
 use wavecore::session::replay::ReplayDevice;
 use wavecore::session::{Command, DemodConfig, RecordFormat, SessionConfig};
 
-use crate::bridge::start_event_bridge;
-use crate::state::AppState;
+use crate::bridge::{BridgeState, start_event_bridge};
+use crate::state::{AppState, RecordingContext, SessionOrigin};
 
 #[tauri::command]
 pub fn connect_device(
@@ -33,6 +35,8 @@ pub fn connect_device(
     let now = Instant::now();
     *state.session_start.lock() = Some(now);
     *state.session_config.lock() = Some(config);
+    *state.session_origin.lock() = Some(SessionOrigin::LiveRtlSdr);
+    *state.recording_context.lock() = None;
     state.bridge_running.store(true, Ordering::Relaxed);
 
     // Initialize mode controller
@@ -48,7 +52,12 @@ pub fn connect_device(
         event_rx,
         now,
         state.bridge_running.clone(),
-        Arc::clone(&state.mode_controller),
+        BridgeState {
+            mode_controller: Arc::clone(&state.mode_controller),
+            session_config: Arc::clone(&state.session_config),
+            session_origin: Arc::clone(&state.session_origin),
+            recording_context: Arc::clone(&state.recording_context),
+        },
         cmd_tx,
     );
     *state.bridge_handle.lock() = Some(handle);
@@ -70,15 +79,18 @@ pub fn disconnect_device(state: State<'_, AppState>) -> Result<(), String> {
         }
         *state.mode_controller.lock() = None;
 
+        let bridge_handle = state.bridge_handle.lock().take();
+        session.shutdown();
+        if let Some(handle) = bridge_handle {
+            handle.join().ok();
+        }
         state.bridge_running.store(false, Ordering::Relaxed);
         state.tracking_active.store(false, Ordering::Relaxed);
         state.analysis_counter.store(1, Ordering::Relaxed);
-        session.shutdown();
-        if let Some(handle) = state.bridge_handle.lock().take() {
-            handle.join().ok();
-        }
         *state.session_start.lock() = None;
         *state.session_config.lock() = None;
+        *state.session_origin.lock() = None;
+        *state.recording_context.lock() = None;
         Ok(())
     } else {
         Err("Not connected".to_string())
@@ -118,6 +130,8 @@ pub fn replay_file(
     let now = Instant::now();
     *state.session_start.lock() = Some(now);
     *state.session_config.lock() = Some(config);
+    *state.session_origin.lock() = Some(SessionOrigin::Replay);
+    *state.recording_context.lock() = None;
     state.bridge_running.store(true, Ordering::Relaxed);
 
     // Initialize mode controller
@@ -133,7 +147,12 @@ pub fn replay_file(
         event_rx,
         now,
         state.bridge_running.clone(),
-        Arc::clone(&state.mode_controller),
+        BridgeState {
+            mode_controller: Arc::clone(&state.mode_controller),
+            session_config: Arc::clone(&state.session_config),
+            session_origin: Arc::clone(&state.session_origin),
+            recording_context: Arc::clone(&state.recording_context),
+        },
         cmd_tx,
     );
     *state.bridge_handle.lock() = Some(handle);
@@ -152,6 +171,9 @@ pub fn tune(frequency: f64, state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_gain(mode: GainMode, state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(ref mut cfg) = *state.session_config.lock() {
+        cfg.gain = mode;
+    }
     send_command(&state, Command::SetGain(mode))
 }
 
@@ -189,24 +211,125 @@ pub fn start_record(
     format: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let cfg = state
+        .session_config
+        .lock()
+        .clone()
+        .ok_or_else(|| "Not connected".to_string())?;
+    let origin = state
+        .session_origin
+        .lock()
+        .as_ref()
+        .copied()
+        .unwrap_or(SessionOrigin::LiveRtlSdr);
     let fmt = match format.as_str() {
         "cf32" | "raw" => RecordFormat::RawCf32,
         "wav" => RecordFormat::Wav,
         "sigmf" => RecordFormat::SigMf,
         _ => return Err(format!("Unknown format: {format}")),
     };
-    send_command(
+    let metadata_format = match fmt {
+        RecordFormat::RawCf32 => "cf32".to_string(),
+        RecordFormat::Wav => "cf32-wav".to_string(),
+        RecordFormat::SigMf => "sigmf-cf32_le".to_string(),
+    };
+    let recording_path = PathBuf::from(path);
+    let gain = match cfg.gain {
+        GainMode::Auto => "auto".to_string(),
+        GainMode::Manual(db) => db.to_string(),
+    };
+
+    {
+        let mut recording = state.recording_context.lock();
+        if recording.is_some() {
+            return Err("Recording already in progress".to_string());
+        }
+        *recording = Some(RecordingContext {
+            path: recording_path.clone(),
+            started_at: Instant::now(),
+            center_freq: cfg.frequency,
+            sample_rate: cfg.sample_rate,
+            gain,
+            format: metadata_format,
+            device: origin.device_name().to_string(),
+            source: origin.capture_source(),
+            started: false,
+        });
+    }
+
+    let result = send_command(
         &state,
         Command::StartRecord {
-            path: PathBuf::from(path),
+            path: recording_path,
             format: fmt,
         },
-    )
+    );
+    if result.is_err() {
+        state.recording_context.lock().take();
+    }
+    result
 }
 
 #[tauri::command]
 pub fn stop_record(state: State<'_, AppState>) -> Result<(), String> {
     send_command(&state, Command::StopRecord)
+}
+
+#[tauri::command]
+pub fn generate_capture_path(format: String, label: Option<String>) -> Result<String, String> {
+    default_capture_path(&format, label.as_deref())
+        .map(|path| path.display().to_string())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_recent_captures(limit: Option<usize>) -> Vec<CaptureRecord> {
+    let mut catalog = CaptureCatalog::load();
+    if catalog.prune_missing() > 0 {
+        if let Err(e) = catalog.save() {
+            tracing::warn!("Failed to save pruned capture catalog: {e}");
+        }
+    }
+    catalog.list_recent(limit.unwrap_or(12))
+}
+
+#[tauri::command]
+pub fn list_bookmarks() -> Vec<Bookmark> {
+    BookmarkStore::load().list().to_vec()
+}
+
+#[tauri::command]
+pub fn save_current_bookmark(
+    name: String,
+    mode: Option<String>,
+    decoder: Option<String>,
+    notes: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let cfg = state
+        .session_config
+        .lock()
+        .clone()
+        .ok_or_else(|| "Not connected".to_string())?;
+    let mut store = BookmarkStore::load();
+    store.add(Bookmark {
+        name,
+        frequency_hz: cfg.frequency,
+        mode,
+        decoder,
+        notes,
+    });
+    store.save()
+}
+
+#[tauri::command]
+pub fn remove_bookmark(name: String) -> Result<(), String> {
+    let mut store = BookmarkStore::load();
+    if store.remove(&name) {
+        store.save()
+    } else {
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -221,6 +344,43 @@ pub fn get_available_decoders() -> Vec<String> {
     wavecore::dsp::decoders::DECODER_NAMES
         .iter()
         .map(|s| (*s).to_string())
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DecoderInfo {
+    pub name: String,
+    pub backend: String,
+    pub summary: String,
+    pub required_tool: Option<String>,
+    pub ready: bool,
+    pub resolved_command: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_decoder_catalog() -> Vec<DecoderInfo> {
+    let tool_index: std::collections::HashMap<_, _> =
+        wavecore::dsp::decoders::tools::cached_tools()
+            .iter()
+            .map(|tool| (tool.name, tool))
+            .collect();
+
+    wavecore::dsp::decoders::DECODER_DESCRIPTORS
+        .iter()
+        .map(|descriptor| {
+            let tool = descriptor
+                .required_tool
+                .and_then(|tool_name| tool_index.get(tool_name).copied());
+            DecoderInfo {
+                name: descriptor.name.to_string(),
+                backend: descriptor.backend.as_str().to_string(),
+                summary: descriptor.summary.to_string(),
+                required_tool: descriptor.required_tool.map(|tool| tool.to_string()),
+                ready: tool.map(|tool| tool.installed).unwrap_or(true),
+                resolved_command: tool
+                    .and_then(|tool| tool.resolved_command.map(|cmd| cmd.to_string())),
+            }
+        })
         .collect()
 }
 

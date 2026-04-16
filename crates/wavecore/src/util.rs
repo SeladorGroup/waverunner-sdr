@@ -2,6 +2,8 @@
 //!
 //! These are used across CLI commands and TUI to avoid duplication.
 
+use std::time::SystemTime;
+
 use crate::hardware::GainMode;
 
 /// Parse frequency strings with SI suffixes.
@@ -109,6 +111,85 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Directory used for generated capture artifacts and local workflow state.
+pub fn capture_dir() -> Option<std::path::PathBuf> {
+    config_dir().map(|d| d.join("captures"))
+}
+
+/// Format the current UTC time as ISO 8601 without pulling in chrono.
+pub fn utc_timestamp_now() -> String {
+    let duration = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+
+    let days = secs / 86_400;
+    let time_secs = secs % 86_400;
+    let hours = time_secs / 3_600;
+    let minutes = (time_secs % 3_600) / 60;
+    let seconds = time_secs % 60;
+
+    let (year, month, day) = civil_from_days(days as i64);
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
+}
+
+/// Compact UTC timestamp used for filenames.
+pub fn utc_timestamp_compact() -> String {
+    let duration = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+
+    let days = secs / 86_400;
+    let time_secs = secs % 86_400;
+    let hours = time_secs / 3_600;
+    let minutes = (time_secs % 3_600) / 60;
+    let seconds = time_secs % 60;
+
+    let (year, month, day) = civil_from_days(days as i64);
+    format!("{year:04}{month:02}{day:02}T{hours:02}{minutes:02}{seconds:02}Z")
+}
+
+/// Convert arbitrary text into a filesystem-safe lowercase slug.
+pub fn slugify(input: &str) -> String {
+    let mut slug = String::with_capacity(input.len());
+    let mut last_was_dash = false;
+
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "capture".to_string()
+    } else {
+        slug
+    }
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m, d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +254,18 @@ mod tests {
         assert_eq!(format_step(1_000_000.0), "1 MHz");
         assert_eq!(format_step(25_000.0), "25 kHz");
         assert_eq!(format_step(100.0), "100 Hz");
+    }
+
+    #[test]
+    fn slugify_compacts_text() {
+        assert_eq!(slugify("FM Survey 94.9!"), "fm-survey-94-9");
+        assert_eq!(slugify("   "), "capture");
+    }
+
+    #[test]
+    fn compact_timestamp_shape() {
+        let stamp = utc_timestamp_compact();
+        assert_eq!(stamp.len(), 16);
+        assert!(stamp.ends_with('Z'));
     }
 }

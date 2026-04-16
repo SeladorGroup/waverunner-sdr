@@ -1122,7 +1122,9 @@ fn run_processing_loop(
                         Ok(out_path) => {
                             try_send_event(
                                 &evt_tx,
-                                Event::Status(StatusUpdate::RecordingStopped(0)),
+                                Event::Status(StatusUpdate::TimelineExported(PathBuf::from(
+                                    out_path.clone(),
+                                ))),
                                 &events_dropped,
                             );
                             tracing::info!("Timeline exported to {out_path}");

@@ -1,0 +1,26 @@
+name = "noaa-apt"
+description = "NOAA APT weather satellite watchlist"
+sample_rate = 2048000.0
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 137100000.0
+label = "NOAA-19 APT"
+monitor = false
+dwell_ms = 12000
+decoder = "noaa-apt-19"
+priority = true
+
+[[frequencies]]
+freq_hz = 137620000.0
+label = "NOAA-15 APT"
+monitor = false
+dwell_ms = 12000
+decoder = "noaa-apt-15"
+
+[[frequencies]]
+freq_hz = 137912500.0
+label = "NOAA-18 APT"
+monitor = false
+dwell_ms = 12000
+decoder = "noaa-apt-18"

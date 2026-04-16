@@ -9,7 +9,12 @@
 
 use serde::Serialize;
 
-use crate::frequency_db::FrequencyDb;
+use crate::analysis::{
+    burst::BurstReport,
+    measurement::MeasurementReport,
+    modulation::{ModulationReport, ModulationType},
+};
+use crate::frequency_db::{FrequencyDb, KNOWN_FREQUENCY_TOLERANCE_HZ};
 use crate::mode::classifier::{RuleClassifier, SignalClass};
 
 /// Result of signal identification.
@@ -31,6 +36,9 @@ pub struct IdentifyResult {
     pub recommended_decoder: Option<String>,
     /// Decoder trial results, if stage 3 was run.
     pub decoder_trials: Vec<DecoderTrialResult>,
+    /// Optional investigation details from a short capture and replay analysis.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub investigation: Option<SignalInvestigation>,
 }
 
 /// Classifier match information.
@@ -50,14 +58,29 @@ pub struct DecoderTrialResult {
     pub trial_duration_ms: u64,
 }
 
+/// Optional deeper investigation produced from a short live capture.
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalInvestigation {
+    pub capture_path: String,
+    pub capture_duration_secs: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<MeasurementReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub burst: Option<BurstReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modulation: Option<ModulationReport>,
+}
+
 /// Run stages 1 and 2 of signal identification (instant, no hardware needed).
 pub fn identify_instant(freq_hz: f64, db: &FrequencyDb) -> IdentifyResult {
-    // Stage 1: FrequencyDb lookup
-    let band = db.lookup(freq_hz);
-    let band_name = band.map(|b| b.label.to_string());
-    let modulation_estimate = band.map(|b| b.modulation.to_string());
-    let recommended_decoder = band.and_then(|b| b.decoder.map(|d| d.to_string()));
-    let recommended_mode = db.demod_mode(freq_hz).map(|s| s.to_string());
+    // Stage 1: FrequencyDb lookup (prefer known exact-ish channels over broad bands)
+    let known_hit = db
+        .lookup_known_frequency(freq_hz, KNOWN_FREQUENCY_TOLERANCE_HZ)
+        .is_some();
+    let band_name = db.band_name(freq_hz).map(|label| label.to_string());
+    let modulation_estimate = db.modulation(freq_hz).map(|mode| mode.to_string());
+    let recommended_decoder = db.decoder(freq_hz).map(|decoder| decoder.to_string());
+    let recommended_mode = db.demod_mode(freq_hz).map(|mode| mode.to_string());
 
     // Stage 2: RuleClassifier
     let classifier = RuleClassifier::new();
@@ -88,11 +111,15 @@ pub fn identify_instant(freq_hz: f64, db: &FrequencyDb) -> IdentifyResult {
     };
 
     // Compute overall confidence
-    let confidence = match (&band_name, &classifier_match) {
-        (Some(_), Some(cm)) => (0.5 + cm.confidence) / 2.0, // Both agree
-        (Some(_), None) => 0.4,                             // DB hit only
-        (None, Some(cm)) => cm.confidence * 0.8,            // Classifier only
-        (None, None) => 0.0,                                // Nothing
+    let confidence = match (known_hit, &band_name, &classifier_match) {
+        (true, Some(_), Some(cm)) => (0.65 + cm.confidence) / 2.0,
+        (true, Some(_), None) => 0.65,
+        (false, Some(_), Some(cm)) => (0.5 + cm.confidence) / 2.0,
+        (false, Some(_), None) => 0.4,
+        (false, None, Some(cm)) => cm.confidence * 0.8,
+        (false, None, None) => 0.0,
+        (true, None, Some(cm)) => (0.55 + cm.confidence) / 2.0,
+        (true, None, None) => 0.55,
     };
 
     // Prefer classifier decoder over DB decoder
@@ -110,6 +137,7 @@ pub fn identify_instant(freq_hz: f64, db: &FrequencyDb) -> IdentifyResult {
         recommended_mode,
         recommended_decoder: best_decoder,
         decoder_trials: Vec::new(),
+        investigation: None,
     }
 }
 
@@ -124,6 +152,36 @@ pub fn add_trial_results(result: &mut IdentifyResult, trials: Vec<DecoderTrialRe
         }
     }
     result.decoder_trials = trials;
+}
+
+/// Attach investigation results captured from a short recording.
+pub fn add_investigation(result: &mut IdentifyResult, investigation: SignalInvestigation) {
+    let mut investigation = investigation;
+    if let Some(mode) = result.recommended_mode.as_deref() {
+        let should_suppress = investigation
+            .modulation
+            .as_ref()
+            .is_some_and(|report| result.confidence >= 0.5 && !mode_matches_report(mode, report));
+        if should_suppress {
+            investigation.modulation = None;
+        }
+    }
+
+    if investigation.modulation.is_some() || investigation.measurement.is_some() {
+        result.confidence = (result.confidence + 0.15).min(1.0);
+    }
+    result.investigation = Some(investigation);
+}
+
+fn mode_matches_report(mode: &str, report: &ModulationReport) -> bool {
+    matches!(
+        (mode, &report.modulation_type),
+        ("am", ModulationType::AM)
+            | ("fm", ModulationType::FM)
+            | ("wfm", ModulationType::FM)
+            | ("wfm-stereo", ModulationType::FM)
+            | ("cw", ModulationType::CW)
+    )
 }
 
 /// Format an IdentifyResult for human-readable display.
@@ -171,6 +229,26 @@ pub fn format_result(result: &IdentifyResult) -> String {
         }
     }
 
+    if let Some(ref investigation) = result.investigation {
+        lines.push(format!(
+            "Capture: {} ({:.1}s)",
+            investigation.capture_path, investigation.capture_duration_secs
+        ));
+        if let Some(ref modulation) = investigation.modulation {
+            lines.push(format!(
+                "Modulation: {} ({:.0}% confidence)",
+                modulation.modulation_type,
+                modulation.confidence * 100.0,
+            ));
+        }
+        if let Some(ref measurement) = investigation.measurement {
+            lines.push(format!(
+                "Occupied bandwidth: {:.1} kHz",
+                measurement.occupied_bw_hz / 1e3
+            ));
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -199,6 +277,8 @@ mod tests {
         let cm = result.classifier_match.as_ref().unwrap();
         assert_eq!(cm.name, "ADS-B");
         assert_eq!(result.recommended_decoder.as_deref(), Some("adsb"));
+        assert_eq!(result.modulation_estimate.as_deref(), Some("ppm"));
+        assert!(result.recommended_mode.is_none());
     }
 
     #[test]
@@ -210,6 +290,16 @@ mod tests {
         assert_eq!(result.confidence, 0.0);
         assert!(result.band_name.is_none());
         assert!(result.classifier_match.is_none());
+    }
+
+    #[test]
+    fn identify_known_frequency_prefers_specific_channel_label() {
+        let db = FrequencyDb::new(Region::NA);
+        let result = identify_instant(162_550_000.0, &db);
+
+        assert_eq!(result.band_name.as_deref(), Some("NOAA Weather 7"));
+        assert_eq!(result.recommended_mode.as_deref(), Some("fm"));
+        assert!(result.confidence >= 0.65);
     }
 
     #[test]
@@ -229,6 +319,74 @@ mod tests {
 
         assert!(result.confidence > initial_confidence);
         assert_eq!(result.recommended_decoder.as_deref(), Some("rds"));
+    }
+
+    #[test]
+    fn investigation_boosts_confidence() {
+        let db = FrequencyDb::new(Region::NA);
+        let mut result = identify_instant(98_300_000.0, &db);
+        let initial_confidence = result.confidence;
+        add_investigation(
+            &mut result,
+            SignalInvestigation {
+                capture_path: "/tmp/test.cf32".to_string(),
+                capture_duration_secs: 5.0,
+                measurement: None,
+                burst: None,
+                modulation: Some(ModulationReport {
+                    modulation_type: crate::analysis::modulation::ModulationType::FM,
+                    confidence: 0.9,
+                    symbol_rate_hz: None,
+                    am_depth: None,
+                    fm_deviation_hz: Some(75_000.0),
+                    amplitude_levels: None,
+                    phase_states: None,
+                }),
+            },
+        );
+        assert!(result.confidence > initial_confidence);
+        assert!(result.investigation.is_some());
+    }
+
+    #[test]
+    fn conflicting_investigation_modulation_is_suppressed_for_strong_known_signal() {
+        let db = FrequencyDb::new(Region::NA);
+        let mut result = identify_instant(98_300_000.0, &db);
+
+        add_investigation(
+            &mut result,
+            SignalInvestigation {
+                capture_path: "/tmp/test.cf32".to_string(),
+                capture_duration_secs: 5.0,
+                measurement: Some(MeasurementReport {
+                    bandwidth_3db_hz: 180_000.0,
+                    bandwidth_6db_hz: 220_000.0,
+                    occupied_bw_hz: 200_000.0,
+                    obw_percent: 99.0,
+                    channel_power_dbfs: -20.0,
+                    acpr_lower_dbc: -30.0,
+                    acpr_upper_dbc: -30.0,
+                    papr_db: 6.0,
+                    freq_offset_hz: 0.0,
+                }),
+                burst: None,
+                modulation: Some(ModulationReport {
+                    modulation_type: ModulationType::AM,
+                    confidence: 0.6,
+                    symbol_rate_hz: None,
+                    am_depth: Some(0.8),
+                    fm_deviation_hz: None,
+                    amplitude_levels: None,
+                    phase_states: None,
+                }),
+            },
+        );
+
+        let investigation = result
+            .investigation
+            .expect("investigation should be attached");
+        assert!(investigation.modulation.is_none());
+        assert!(investigation.measurement.is_some());
     }
 
     #[test]

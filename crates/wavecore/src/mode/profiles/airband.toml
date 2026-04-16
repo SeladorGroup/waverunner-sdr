@@ -1,0 +1,27 @@
+name = "airband-voice"
+description = "Voice airband watchlist with AM demod on common VHF channels"
+sample_rate = 2048000.0
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 118300000.0
+label = "Tower"
+monitor = false
+dwell_ms = 5000
+mode = "am"
+
+[[frequencies]]
+freq_hz = 121500000.0
+label = "Guard 121.5"
+monitor = false
+dwell_ms = 4000
+mode = "am"
+priority = true
+
+[[frequencies]]
+freq_hz = 123025000.0
+label = "ATIS/UNICOM"
+monitor = false
+dwell_ms = 5000
+mode = "am"
+

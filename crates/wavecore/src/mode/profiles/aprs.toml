@@ -1,0 +1,12 @@
+name = "aprs"
+description = "APRS AFSK1200 monitoring on 144.390 MHz"
+sample_rate = 2048000.0
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 144390000.0
+label = "APRS 144.390 MHz"
+monitor = true
+decoder = "aprs"
+mode = "fm"
+

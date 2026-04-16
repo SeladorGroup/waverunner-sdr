@@ -1,6 +1,6 @@
 name = "aviation"
 description = "ADS-B transponder monitoring at 1090 MHz"
-sample_rate = 2000000.0
+sample_rate = 2400000.0
 decoders = ["adsb"]
 gain = "auto"
 

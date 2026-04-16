@@ -138,7 +138,11 @@ impl RuleClassifier {
 
             confidence = confidence.min(1.0);
 
-            if best.is_none() || confidence > best.unwrap().1 {
+            let should_replace = best
+                .as_ref()
+                .map(|(_, best_confidence)| confidence > *best_confidence)
+                .unwrap_or(true);
+            if should_replace {
                 best = Some((rule, confidence));
             }
         }

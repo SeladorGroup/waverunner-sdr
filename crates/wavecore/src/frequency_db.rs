@@ -136,6 +136,8 @@ pub struct BandAllocation {
     pub service: ServiceType,
     /// Recommended demodulation mode (e.g. "wfm", "am", "fm").
     pub modulation: &'static str,
+    /// Demod mode suitable for live listening, if applicable.
+    pub demod_mode: Option<&'static str>,
     /// Recommended decoder name, if any.
     pub decoder: Option<&'static str>,
     /// Recommended sample rate for this band, if specific.
@@ -157,6 +159,8 @@ pub struct FrequencyAllocation {
     pub service: ServiceType,
     /// Recommended demod mode.
     pub modulation: &'static str,
+    /// Demod mode suitable for live listening, if applicable.
+    pub demod_mode: Option<&'static str>,
     /// Recommended decoder, if any.
     pub decoder: Option<&'static str>,
     /// Regions where this channel exists.
@@ -175,6 +179,7 @@ pub struct FrequencyDb {
 }
 
 const ALL_REGIONS: &[Region] = &[Region::NA, Region::EU, Region::JP, Region::AU];
+pub const KNOWN_FREQUENCY_TOLERANCE_HZ: f64 = 15_000.0;
 
 impl FrequencyDb {
     /// Create a new database for the given region.
@@ -203,19 +208,62 @@ impl FrequencyDb {
             .min_by_key(|b| ((b.end_hz - b.start_hz) * 1000.0) as u64)
     }
 
+    /// Look up the nearest known discrete channel within a tolerance.
+    pub fn lookup_known_frequency(
+        &self,
+        freq_hz: f64,
+        tolerance_hz: f64,
+    ) -> Option<&FrequencyAllocation> {
+        self.frequencies
+            .iter()
+            .filter(|f| f.regions.contains(&self.region))
+            .filter(|f| (f.freq_hz - freq_hz).abs() <= tolerance_hz)
+            .min_by(|a, b| {
+                (a.freq_hz - freq_hz)
+                    .abs()
+                    .partial_cmp(&(b.freq_hz - freq_hz).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+
     /// Get the band name for a frequency.
     pub fn band_name(&self, freq_hz: f64) -> Option<&str> {
-        self.lookup(freq_hz).map(|b| b.label)
+        self.lookup_known_frequency(freq_hz, KNOWN_FREQUENCY_TOLERANCE_HZ)
+            .map(|f| f.label)
+            .or_else(|| self.lookup(freq_hz).map(|b| b.label))
+    }
+
+    /// Get the expected signal modulation for a frequency.
+    pub fn modulation(&self, freq_hz: f64) -> Option<&str> {
+        self.lookup_known_frequency(freq_hz, KNOWN_FREQUENCY_TOLERANCE_HZ)
+            .map(|f| f.modulation)
+            .or_else(|| self.lookup(freq_hz).map(|b| b.modulation))
     }
 
     /// Get the recommended demod mode for a frequency.
     pub fn demod_mode(&self, freq_hz: f64) -> Option<&str> {
-        self.lookup(freq_hz).map(|b| b.modulation)
+        self.lookup_known_frequency(freq_hz, KNOWN_FREQUENCY_TOLERANCE_HZ)
+            .and_then(|f| f.demod_mode)
+            .or_else(|| self.lookup(freq_hz).and_then(|b| b.demod_mode))
     }
 
     /// Get the recommended decoder for a frequency.
     pub fn decoder(&self, freq_hz: f64) -> Option<&str> {
-        self.lookup(freq_hz).and_then(|b| b.decoder)
+        self.lookup_known_frequency(freq_hz, KNOWN_FREQUENCY_TOLERANCE_HZ)
+            .and_then(|f| f.decoder)
+            .or_else(|| self.lookup(freq_hz).and_then(|b| b.decoder))
+    }
+
+    /// Get the service classification for a frequency.
+    pub fn service(&self, freq_hz: f64) -> Option<ServiceType> {
+        self.lookup_known_frequency(freq_hz, KNOWN_FREQUENCY_TOLERANCE_HZ)
+            .map(|f| f.service)
+            .or_else(|| self.lookup(freq_hz).map(|b| b.service))
+    }
+
+    /// Get a sample-rate hint for a frequency.
+    pub fn sample_rate_hint(&self, freq_hz: f64) -> Option<f64> {
+        self.lookup(freq_hz).and_then(|b| b.sample_rate)
     }
 
     /// Get all discrete known frequencies for the active region.
@@ -326,6 +374,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "LW AM Broadcast",
             service: ServiceType::AmBroadcast,
             modulation: "am",
+            demod_mode: Some("am"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (5_000.0, 10_000.0),
@@ -338,6 +387,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "MW AM Broadcast",
             service: ServiceType::AmBroadcast,
             modulation: "am",
+            demod_mode: Some("am"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (5_000.0, 10_000.0),
@@ -350,6 +400,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "HF Amateur",
             service: ServiceType::AmateurRadio,
             modulation: "usb",
+            demod_mode: Some("usb"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (300.0, 3_000.0),
@@ -362,6 +413,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "FM Broadcast",
             service: ServiceType::FmBroadcast,
             modulation: "wfm",
+            demod_mode: Some("wfm"),
             decoder: Some("rds"),
             sample_rate: Some(1_024_000.0),
             bandwidth_range: (150_000.0, 250_000.0),
@@ -374,6 +426,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "FM Broadcast",
             service: ServiceType::FmBroadcast,
             modulation: "wfm",
+            demod_mode: Some("wfm"),
             decoder: Some("rds"),
             sample_rate: Some(1_024_000.0),
             bandwidth_range: (150_000.0, 250_000.0),
@@ -386,6 +439,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "Airband",
             service: ServiceType::Aviation,
             modulation: "am",
+            demod_mode: Some("am"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (3_000.0, 10_000.0),
@@ -398,6 +452,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "2m Amateur",
             service: ServiceType::AmateurRadio,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (10_000.0, 25_000.0),
@@ -410,6 +465,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "VHF NFM",
             service: ServiceType::Other,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (10_000.0, 25_000.0),
@@ -422,6 +478,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "UHF Military AM",
             service: ServiceType::Military,
             modulation: "am",
+            demod_mode: Some("am"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (3_000.0, 25_000.0),
@@ -434,6 +491,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "ISM 315 MHz",
             service: ServiceType::Ism,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("rtl433-315"),
             sample_rate: None,
             bandwidth_range: (1_000.0, 500_000.0),
@@ -446,6 +504,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "ISM 433 MHz",
             service: ServiceType::Ism,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("ook"),
             sample_rate: None,
             bandwidth_range: (1_000.0, 500_000.0),
@@ -458,6 +517,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "PMR446",
             service: ServiceType::PersonalRadio,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (10_000.0, 12_500.0),
@@ -470,6 +530,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "FRS/GMRS",
             service: ServiceType::PersonalRadio,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (10_000.0, 25_000.0),
@@ -482,6 +543,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "UHF NFM",
             service: ServiceType::Other,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (10_000.0, 25_000.0),
@@ -494,6 +556,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "UHF TV/FM",
             service: ServiceType::FmBroadcast,
             modulation: "wfm",
+            demod_mode: Some("wfm"),
             decoder: None,
             sample_rate: None,
             bandwidth_range: (100_000.0, 8_000_000.0),
@@ -506,6 +569,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "ISM 868 MHz",
             service: ServiceType::Ism,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("rtl433-868"),
             sample_rate: None,
             bandwidth_range: (1_000.0, 500_000.0),
@@ -518,6 +582,7 @@ fn build_bands() -> Vec<BandAllocation> {
             label: "ISM 915 MHz",
             service: ServiceType::Ism,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("rtl433-915"),
             sample_rate: None,
             bandwidth_range: (1_000.0, 500_000.0),
@@ -529,9 +594,10 @@ fn build_bands() -> Vec<BandAllocation> {
             end_hz: 1_091_000_000.0,
             label: "ADS-B",
             service: ServiceType::Aviation,
-            modulation: "fm",
+            modulation: "ppm",
+            demod_mode: None,
             decoder: Some("adsb"),
-            sample_rate: Some(2_048_000.0),
+            sample_rate: Some(2_400_000.0),
             bandwidth_range: (1_000_000.0, 3_000_000.0),
             regions: ALL_REGIONS,
         },
@@ -547,6 +613,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "Aviation Emergency",
             service: ServiceType::Emergency,
             modulation: "am",
+            demod_mode: Some("am"),
             decoder: None,
             regions: ALL_REGIONS,
         },
@@ -556,6 +623,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "APRS",
             service: ServiceType::AmateurRadio,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("aprs"),
             regions: &[Region::NA],
         },
@@ -565,6 +633,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "APRS",
             service: ServiceType::AmateurRadio,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("aprs"),
             regions: &[Region::EU],
         },
@@ -574,6 +643,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "Marine VHF Ch16",
             service: ServiceType::Maritime,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: ALL_REGIONS,
         },
@@ -583,6 +653,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "AIS Channel A",
             service: ServiceType::Maritime,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("ais-a"),
             regions: ALL_REGIONS,
         },
@@ -592,6 +663,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "AIS Channel B",
             service: ServiceType::Maritime,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("ais-b"),
             regions: ALL_REGIONS,
         },
@@ -601,6 +673,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 1",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -609,6 +682,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 2",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -617,6 +691,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 3",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -625,6 +700,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 4",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -633,6 +709,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 5",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -641,6 +718,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 6",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -649,6 +727,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA Weather 7",
             service: ServiceType::Weather,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: None,
             regions: &[Region::NA],
         },
@@ -658,6 +737,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA-19 APT",
             service: ServiceType::Satellite,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("noaa-apt-19"),
             regions: ALL_REGIONS,
         },
@@ -666,6 +746,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA-15 APT",
             service: ServiceType::Satellite,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("noaa-apt-15"),
             regions: ALL_REGIONS,
         },
@@ -674,6 +755,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "NOAA-18 APT",
             service: ServiceType::Satellite,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("noaa-apt-18"),
             regions: ALL_REGIONS,
         },
@@ -683,6 +765,7 @@ fn build_frequencies() -> Vec<FrequencyAllocation> {
             label: "POCSAG Pager",
             service: ServiceType::Pager,
             modulation: "fm",
+            demod_mode: Some("fm"),
             decoder: Some("pocsag"),
             regions: &[Region::NA],
         },
@@ -761,8 +844,34 @@ mod tests {
     fn band_name_and_demod_mode() {
         let db = FrequencyDb::new(Region::NA);
         assert_eq!(db.band_name(98_300_000.0), Some("FM Broadcast"));
+        assert_eq!(db.modulation(98_300_000.0), Some("wfm"));
         assert_eq!(db.demod_mode(98_300_000.0), Some("wfm"));
         assert_eq!(db.decoder(98_300_000.0), Some("rds"));
+    }
+
+    #[test]
+    fn known_frequency_overrides_general_band_metadata() {
+        let db = FrequencyDb::new(Region::NA);
+        assert_eq!(db.band_name(162_550_000.0), Some("NOAA Weather 7"));
+        assert_eq!(db.demod_mode(162_550_000.0), Some("fm"));
+        assert_eq!(db.decoder(161_975_000.0), Some("ais-a"));
+    }
+
+    #[test]
+    fn adsb_has_decoder_hint_but_no_live_demod_mode() {
+        let db = FrequencyDb::new(Region::NA);
+        assert_eq!(db.band_name(1_090_000_000.0), Some("ADS-B"));
+        assert_eq!(db.modulation(1_090_000_000.0), Some("ppm"));
+        assert_eq!(db.demod_mode(1_090_000_000.0), None);
+        assert_eq!(db.decoder(1_090_000_000.0), Some("adsb"));
+        assert_eq!(db.sample_rate_hint(1_090_000_000.0), Some(2_400_000.0));
+    }
+
+    #[test]
+    fn service_prefers_known_frequency_over_broad_band() {
+        let db = FrequencyDb::new(Region::NA);
+        assert_eq!(db.service(162_550_000.0), Some(ServiceType::Weather));
+        assert_eq!(db.service(161_975_000.0), Some(ServiceType::Maritime));
     }
 
     #[test]

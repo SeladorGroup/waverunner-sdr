@@ -18,6 +18,7 @@
   import Settings from './lib/components/Settings.svelte';
   import AnalysisPanel from './lib/components/AnalysisPanel.svelte';
   import TrackingChart from './lib/components/TrackingChart.svelte';
+  import LibraryPanel from './lib/components/LibraryPanel.svelte';
 
   const STEP_SIZES = [1, 10, 100, 1000, 5000, 10000, 25000, 100000, 1000000, 10000000];
   const DEMOD_MODES = ['OFF', 'am', 'am-sync', 'fm', 'wfm', 'wfm-stereo', 'usb', 'lsb', 'cw'];
@@ -104,6 +105,7 @@
 
     <div class="side-column">
       <Controls />
+      <LibraryPanel />
       <SignalStats />
       <AnalysisPanel />
       <Settings />

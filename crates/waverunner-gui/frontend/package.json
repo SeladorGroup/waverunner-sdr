@@ -10,15 +10,17 @@
   "scripts": {
     "dev": "vite dev --port 1420",
     "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview"
   },
   "dependencies": {
     "@tauri-apps/api": "^2"
   },
   "devDependencies": {
-    "svelte": "^5",
     "@sveltejs/vite-plugin-svelte": "^5",
-    "vite": "^6",
-    "typescript": "^5"
+    "svelte": "^5",
+    "svelte-check": "^4.4.6",
+    "typescript": "^5",
+    "vite": "^6"
   }
 }

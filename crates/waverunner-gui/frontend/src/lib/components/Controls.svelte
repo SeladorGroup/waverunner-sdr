@@ -2,14 +2,17 @@
   import { onMount } from 'svelte';
   import {
     frequency, gain, connected, demodMode, sampleRate,
+    enabledDecoders, recordingActive,
     activeMode, modeStatus,
     cmdTune, cmdSetGain, cmdStartDemod, cmdStopDemod,
     cmdEnableDecoder, cmdDisableDecoder,
     cmdStartRecord, cmdStopRecord,
-    getAvailableDecoders, listProfiles,
+    generateCapturePath,
+    getDecoderCatalog, listProfiles,
     activateProfile, activateGeneralScan, deactivateMode,
   } from '../stores/radio';
   import type { DemodConfig } from '../types';
+  import type { DecoderInfo } from '../types';
   import type { ProfileInfo } from '../stores/radio';
 
   const STEP_SIZES = [
@@ -25,12 +28,12 @@
   ];
 
   const DEMOD_MODES = ['OFF', 'am', 'am-sync', 'fm', 'wfm', 'wfm-stereo', 'usb', 'lsb', 'cw'];
-  let decoders: string[] = [];
+  let decoders: DecoderInfo[] = [];
   let profiles: ProfileInfo[] = [];
 
   onMount(async () => {
     try {
-      decoders = await getAvailableDecoders();
+      decoders = await getDecoderCatalog();
     } catch {
       decoders = [];
     }
@@ -46,10 +49,46 @@
   let selectedDemod = 'OFF';
   let selectedDecoder = '';
   let activeDecoder = '';
-  let isRecording = false;
+  let selectedDecoderActive = false;
   let gainValue = 0;
   let gainAuto = true;
   let selectedProfile = '';
+  let lastKnownActiveMode = '';
+
+  $: if ($demodMode && selectedDemod !== $demodMode) {
+    selectedDemod = $demodMode;
+  }
+
+  $: if ($gain === 'Auto') {
+    gainAuto = true;
+  } else {
+    gainAuto = false;
+    gainValue = $gain.Manual;
+  }
+
+  $: {
+    activeDecoder = $enabledDecoders.length === 1 ? $enabledDecoders[0] : '';
+    selectedDecoderActive =
+      selectedDecoder !== '' && $enabledDecoders.includes(selectedDecoder);
+    if (!selectedDecoder && activeDecoder) {
+      selectedDecoder = activeDecoder;
+    }
+  }
+
+  $: {
+    if ($activeMode !== lastKnownActiveMode) {
+      if ($activeMode === '') {
+        if (lastKnownActiveMode !== '') {
+          selectedProfile = '';
+        }
+      } else if ($activeMode === 'general') {
+        selectedProfile = 'general';
+      } else {
+        selectedProfile = $activeMode;
+      }
+      lastKnownActiveMode = $activeMode;
+    }
+  }
 
   function tuneUp() {
     const newFreq = $frequency + STEP_SIZES[stepIndex].value;
@@ -101,13 +140,13 @@
   }
 
   function toggleDecoder() {
-    if (activeDecoder === selectedDecoder) {
-      cmdDisableDecoder(activeDecoder);
-      activeDecoder = '';
+    if (selectedDecoderActive) {
+      cmdDisableDecoder(selectedDecoder);
     } else {
-      if (activeDecoder) cmdDisableDecoder(activeDecoder);
+      if (activeDecoder && activeDecoder !== selectedDecoder) {
+        cmdDisableDecoder(activeDecoder);
+      }
       cmdEnableDecoder(selectedDecoder);
-      activeDecoder = selectedDecoder;
     }
   }
 
@@ -124,6 +163,16 @@
     if (!gainAuto) {
       cmdSetGain({ Manual: gainValue });
     }
+  }
+
+  async function toggleRecord() {
+    if ($recordingActive) {
+      await cmdStopRecord();
+      return;
+    }
+
+    const path = await generateCapturePath('raw', 'gui');
+    await cmdStartRecord(path, 'cf32');
   }
 </script>
 
@@ -188,13 +237,26 @@
       <select bind:value={selectedDecoder} disabled={!$connected}>
         <option value="">None</option>
         {#each decoders as dec}
-          <option value={dec}>{dec}</option>
+          <option value={dec.name} disabled={!dec.ready}>
+            {dec.name}{dec.ready ? '' : ' (missing)'}
+          </option>
         {/each}
       </select>
       <button onclick={toggleDecoder} disabled={!$connected || !selectedDecoder}>
-        {activeDecoder === selectedDecoder && activeDecoder ? 'Stop' : 'Start'}
+        {selectedDecoderActive ? 'Stop' : 'Start'}
       </button>
     </div>
+    {#if selectedDecoder}
+      {@const decoder = decoders.find((item) => item.name === selectedDecoder)}
+      {#if decoder}
+        <div class="mode-status">
+          {decoder.summary}
+          {#if !decoder.ready && decoder.required_tool}
+            | missing {decoder.required_tool}
+          {/if}
+        </div>
+      {/if}
+    {/if}
   </section>
 
   <section>
@@ -230,11 +292,11 @@
   <section>
     <h3>Record</h3>
     <button
-      onclick={() => { isRecording = !isRecording; isRecording ? cmdStartRecord('recording.cf32', 'cf32') : cmdStopRecord(); }}
+      onclick={toggleRecord}
       disabled={!$connected}
-      class:danger={isRecording}
+      class:danger={$recordingActive}
     >
-      {isRecording ? 'Stop' : 'Record'}
+      {$recordingActive ? 'Stop' : 'Record'}
     </button>
   </section>
 </div>

@@ -237,6 +237,8 @@ pub enum StatusUpdate {
     RecordingStarted(PathBuf),
     /// Recording stopped with total samples written.
     RecordingStopped(u64),
+    /// Session timeline exported.
+    TimelineExported(PathBuf),
     /// Decoder enabled.
     DecoderEnabled(String),
     /// Decoder disabled.

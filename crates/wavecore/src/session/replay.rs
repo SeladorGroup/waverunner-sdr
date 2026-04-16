@@ -49,9 +49,17 @@ pub enum IqFormat {
 impl IqFormat {
     /// Detect format from file extension.
     fn from_path(path: &Path) -> Option<IqFormat> {
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".sigmf-data"))
+        {
+            return Some(IqFormat::Cf32Le);
+        }
+
         let ext = path.extension()?.to_str()?.to_lowercase();
         match ext.as_str() {
-            "cf32" | "raw" | "iq" | "fc32" | "cfile" => Some(IqFormat::Cf32Le),
+            "cf32" | "raw" | "iq" | "fc32" | "cfile" | "sigmf-data" => Some(IqFormat::Cf32Le),
             "cu8" | "cs8" | "u8" => Some(IqFormat::Cu8),
             "wav" => Some(IqFormat::WavF32),
             _ => None,
@@ -783,6 +791,10 @@ mod tests {
         assert_eq!(
             IqFormat::from_path(Path::new("recording.wav")),
             Some(IqFormat::WavF32)
+        );
+        assert_eq!(
+            IqFormat::from_path(Path::new("recording.sigmf-data")),
+            Some(IqFormat::Cf32Le)
         );
         assert_eq!(IqFormat::from_path(Path::new("recording.xyz")), None);
         assert_eq!(IqFormat::from_path(Path::new("no_extension")), None);

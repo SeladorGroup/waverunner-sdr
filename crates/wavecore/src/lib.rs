@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod bookmarks;
 pub mod buffer;
+pub mod captures;
 pub mod dsp;
 pub mod error;
 pub mod frequency_db;

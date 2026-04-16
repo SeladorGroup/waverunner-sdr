@@ -1,0 +1,21 @@
+name = "ais-watch"
+description = "AIS maritime watchlist covering channels A and B"
+sample_rate = 2048000.0
+gain = "auto"
+
+[[frequencies]]
+freq_hz = 161975000.0
+label = "AIS A"
+monitor = false
+dwell_ms = 6000
+decoder = "ais-a"
+priority = true
+
+[[frequencies]]
+freq_hz = 162025000.0
+label = "AIS B"
+monitor = false
+dwell_ms = 6000
+decoder = "ais-b"
+priority = true
+

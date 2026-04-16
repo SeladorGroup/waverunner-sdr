@@ -5,6 +5,7 @@ pub mod decode;
 pub mod demod;
 pub mod identify;
 pub mod info;
+pub mod library;
 pub mod listen;
 pub mod mode;
 pub mod probe;
@@ -34,6 +35,8 @@ pub enum Command {
     Demod(demod::DemodArgs),
     /// Tune to a frequency and listen (auto-detects mode from band)
     Listen(listen::ListenArgs),
+    /// Inspect recent captures and generated default capture paths
+    Library(library::LibraryArgs),
     /// Decode a protocol (POCSAG, ADS-B, RDS)
     Decode(decode::DecodeArgs),
     /// Run a mode (auto-scan or mission profile)
@@ -62,6 +65,10 @@ pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
         Command::Record(args) => record::run(args, device_index).await,
         Command::Demod(args) => demod::run(args, device_index).await,
         Command::Listen(args) => listen::run(args, device_index).await,
+        Command::Library(args) => {
+            library::run(args)?;
+            Ok(())
+        }
         Command::Decode(args) => decode::run(args, device_index).await,
         Command::Mode(args) => mode::run(args, device_index).await,
         Command::Analyze(args) => analyze::run(args, device_index).await,
