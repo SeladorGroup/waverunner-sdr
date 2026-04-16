@@ -46,6 +46,16 @@ AI assistance is acceptable, but generated code is not exempt from normal engine
 - Do not merge AI-assisted changes that are harder to explain than to rewrite.
 - Verify runtime decoder changes against real captures or live hardware, not just unit tests.
 
+## Maintainer Note for Contributors
+
+i am not a dev. i did this using ai tools completely. i dont know rust, i dont know rf, and i dont come from an engineering background.
+
+i got an rtl dongle, found this whole thing really fun, and then got fed up with how many different bits of software i had to bounce between just to do basic stuff. so i made my own thing and decided to share it with anyone else who might want it too.
+
+this is me being honest about what this project is: it comes from genuine interest, a lot of stubbornness, and a lot of ai-assisted work. it is not me pretending to be an rf person or a rust expert.
+
+if you are actually good at rf/sdr, dsp, rust, or just the kind of person who would really use something like this and wants it to be better, i would love your help. i want this to get better. i want it to be more solid. and i want actual people who wanna use it working on it and shaping it into something real.
+
 ## Release Validation
 
 Before tagging a GitHub release:

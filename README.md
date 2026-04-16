@@ -169,4 +169,4 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, contributor guidelines, and a maintainer note for contributors.
