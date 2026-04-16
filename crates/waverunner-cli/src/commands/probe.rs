@@ -11,25 +11,25 @@ pub async fn run(args: ProbeArgs) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-
-    // Check rtl_433 availability
-    let rtl433_version = match std::process::Command::new("rtl_433")
-        .arg("-V")
-        .output()
-    {
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let combined = format!("{stdout}{stderr}");
-            combined
-                .lines()
-                .find(|l| l.contains("rtl_433"))
-                .unwrap_or("found (unknown version)")
-                .trim()
-                .to_string()
-        }
-        Err(_) => "not found".to_string(),
-    };
+    let tools = wavecore::dsp::decoders::tools::detect_tools();
+    let rtl433_status = tools
+        .iter()
+        .find(|tool| tool.name == "rtl_433")
+        .map(|tool| {
+            if !tool.installed {
+                "not found".to_string()
+            } else {
+                match (tool.version.as_deref(), tool.resolved_command) {
+                    (Some(version), Some(command)) if command != tool.name => {
+                        format!("{version} via {command}")
+                    }
+                    (Some(version), _) => version.to_string(),
+                    (None, Some(command)) => format!("found via {command}"),
+                    (None, None) => "found".to_string(),
+                }
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
 
     // Report wavecore feature status via its re-exported markers
     let audio_info = if wavecore::hardware::has_audio_feature() {
@@ -45,6 +45,19 @@ pub async fn run(args: ProbeArgs) -> Result<()> {
     };
 
     if args.json {
+        let external_tools: Vec<serde_json::Value> = tools
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name,
+                    "commands": tool.commands,
+                    "resolved_command": tool.resolved_command,
+                    "installed": tool.installed,
+                    "version": tool.version.as_deref(),
+                    "description": tool.description,
+                })
+            })
+            .collect();
         let doc = serde_json::json!({
             "waverunner_version": version,
             "os": os,
@@ -52,7 +65,8 @@ pub async fn run(args: ProbeArgs) -> Result<()> {
             "rust_edition": "2024",
             "rtlsdr_feature": rtlsdr_info,
             "audio_feature": audio_info,
-            "rtl_433": rtl433_version,
+            "rtl_433": rtl433_status,
+            "external_tools": external_tools,
         });
         println!("{}", serde_json::to_string_pretty(&doc)?);
     } else {
@@ -69,7 +83,21 @@ pub async fn run(args: ProbeArgs) -> Result<()> {
         println!("  Audio:         {audio_info}");
         println!();
         println!("External tools:");
-        println!("  rtl_433:       {rtl433_version}");
+        for tool in &tools {
+            let status = if tool.installed {
+                match (tool.version.as_deref(), tool.resolved_command) {
+                    (Some(version), Some(command)) if command != tool.name => {
+                        format!("v{version} via {command}")
+                    }
+                    (Some(version), _) => format!("v{version}"),
+                    (None, Some(command)) => format!("found via {command}"),
+                    (None, None) => "found".to_string(),
+                }
+            } else {
+                "missing".to_string()
+            };
+            println!("  {:<14} {}", tool.name, status);
+        }
     }
 
     Ok(())

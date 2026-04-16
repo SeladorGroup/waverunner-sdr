@@ -25,12 +25,12 @@ use std::f64::consts::PI;
 /// The anti-aliasing filter cutoff is set to min(π/L, π/M) to prevent
 /// aliasing from both the interpolation and decimation.
 pub struct PolyphaseResampler {
-    up: usize,                    // L (interpolation factor)
-    down: usize,                  // M (decimation factor)
-    branches: Vec<Vec<f32>>,      // L polyphase branches, each of length ceil(taps/L)
-    buffer: Vec<Sample>,          // shared circular input buffer
-    buf_pos: usize,               // write position in buffer
-    phase: usize,                 // polyphase phase accumulator
+    up: usize,               // L (interpolation factor)
+    down: usize,             // M (decimation factor)
+    branches: Vec<Vec<f32>>, // L polyphase branches, each of length ceil(taps/L)
+    buffer: Vec<Sample>,     // shared circular input buffer
+    buf_pos: usize,          // write position in buffer
+    phase: usize,            // polyphase phase accumulator
 }
 
 impl PolyphaseResampler {
@@ -52,7 +52,7 @@ impl PolyphaseResampler {
             1.0 / up.max(down) as f64
         };
 
-        let coeffs = design_sinc_filter(num_taps, fc * up as f64);
+        let coeffs = design_sinc_filter(num_taps, fc);
 
         // Decompose into polyphase branches
         // h_p[k] = h[k*L + p] for phase p, index k
@@ -246,8 +246,7 @@ impl FarrowResampler {
                     let mut basis = 1.0f32;
                     for j in 0..n {
                         if i != j {
-                            basis *= (mu as f32 - j as f32 + half as f32)
-                                / (i as f32 - j as f32);
+                            basis *= (mu as f32 - j as f32 + half as f32) / (i as f32 - j as f32);
                         }
                     }
                     result += xi * basis;
@@ -448,8 +447,7 @@ pub fn cic_compensation_fir(
         } else {
             // Transition/stopband: taper to zero
             let edge = (f - passband_width) / (1.0 - passband_width);
-            desired[k] = desired[(passband_width * n_freq as f64) as usize]
-                * (1.0 - edge).max(0.0);
+            desired[k] = desired[(passband_width * n_freq as f64) as usize] * (1.0 - edge).max(0.0);
         }
     }
 
@@ -592,8 +590,8 @@ mod tests {
         let output = resampler.process(&input);
 
         // After transient, output should still be sinusoidal
-        let pow: f32 = output[50..].iter().map(|s| s.re * s.re).sum::<f32>()
-            / (output.len() - 50) as f32;
+        let pow: f32 =
+            output[50..].iter().map(|s| s.re * s.re).sum::<f32>() / (output.len() - 50) as f32;
         assert!(
             pow > 0.1,
             "Low frequency signal should survive decimation: power = {pow}"

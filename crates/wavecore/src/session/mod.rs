@@ -40,10 +40,7 @@ pub enum Command {
     /// Change sample rate.
     SetSampleRate(f64),
     /// Start recording IQ to file.
-    StartRecord {
-        path: PathBuf,
-        format: RecordFormat,
-    },
+    StartRecord { path: PathBuf, format: RecordFormat },
     /// Stop recording.
     StopRecord,
     /// Enable a named decoder (spawns decoder thread).
@@ -72,10 +69,7 @@ pub enum Command {
     /// Export data to file.
     Export(analysis::export::ExportConfig),
     /// Add an annotation to the session timeline.
-    AddAnnotation {
-        kind: String,
-        text: String,
-    },
+    AddAnnotation { kind: String, text: String },
     /// Export the session timeline to a file.
     ExportTimeline {
         path: PathBuf,
@@ -282,9 +276,23 @@ pub struct DemodConfig {
     pub deemph_us: Option<f64>,
     /// Output WAV file for recording demodulated audio.
     pub output_wav: Option<PathBuf>,
+    /// Emit per-block demod visualization for UI consumers.
+    #[serde(default = "default_emit_visualization")]
+    pub emit_visualization: bool,
+    /// Minimum block interval between spectrum updates while demod is active.
+    #[serde(default = "default_spectrum_update_interval_blocks")]
+    pub spectrum_update_interval_blocks: u8,
 }
 
 fn default_schema_v1() -> u32 {
+    1
+}
+
+fn default_emit_visualization() -> bool {
+    true
+}
+
+fn default_spectrum_update_interval_blocks() -> u8 {
     1
 }
 
@@ -380,6 +388,23 @@ mod tests {
         };
         let event = Event::DemodVis(vis);
         assert!(matches!(event, Event::DemodVis(_)));
+    }
+
+    #[test]
+    fn demod_config_new_fields_default_for_older_payloads() {
+        let config: DemodConfig = serde_json::from_value(serde_json::json!({
+            "mode": "wfm",
+            "audio_rate": 48000,
+            "bandwidth": null,
+            "bfo": null,
+            "squelch": null,
+            "deemph_us": null,
+            "output_wav": null
+        }))
+        .unwrap();
+
+        assert!(config.emit_visualization);
+        assert_eq!(config.spectrum_update_interval_blocks, 1);
     }
 
     #[test]

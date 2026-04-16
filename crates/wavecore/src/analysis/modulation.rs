@@ -70,6 +70,15 @@ pub struct ModulationReport {
     pub phase_states: Option<usize>,
 }
 
+/// Maximum number of samples used for modulation estimation.
+///
+/// Processing 262144-sample blocks (the default SDR block size) through the
+/// autocorrelation-based symbol rate estimator is O(n * max_lag) — over a
+/// billion operations that can take tens of seconds in debug builds. 32768
+/// samples provides plenty of statistical resolution for classification
+/// while keeping the analysis fast even without compiler optimizations.
+const MAX_MODULATION_SAMPLES: usize = 32768;
+
 /// Estimate modulation parameters from IQ samples.
 ///
 /// Uses a decision tree based on:
@@ -90,8 +99,20 @@ pub fn estimate_modulation(samples: &[Sample], config: &ModulationConfig) -> Mod
         };
     }
 
+    // Cap sample count to avoid O(n * max_lag) blowup in symbol rate estimation.
+    // Use a centered slice so we skip any startup transients at the block boundary.
+    let samples = if samples.len() > MAX_MODULATION_SAMPLES {
+        let offset = (samples.len() - MAX_MODULATION_SAMPLES) / 2;
+        &samples[offset..offset + MAX_MODULATION_SAMPLES]
+    } else {
+        samples
+    };
+
     // Compute envelope (amplitude) statistics
-    let envelope: Vec<f32> = samples.iter().map(|s| (s.re * s.re + s.im * s.im).sqrt()).collect();
+    let envelope: Vec<f32> = samples
+        .iter()
+        .map(|s| (s.re * s.re + s.im * s.im).sqrt())
+        .collect();
     let env_mean = envelope.iter().map(|&v| v as f64).sum::<f64>() / envelope.len() as f64;
     let env_var = envelope
         .iter()
@@ -99,7 +120,11 @@ pub fn estimate_modulation(samples: &[Sample], config: &ModulationConfig) -> Mod
         .sum::<f64>()
         / envelope.len() as f64;
     let env_std = env_var.sqrt();
-    let env_cv = if env_mean > 1e-10 { env_std / env_mean } else { 0.0 }; // coefficient of variation
+    let env_cv = if env_mean > 1e-10 {
+        env_std / env_mean
+    } else {
+        0.0
+    }; // coefficient of variation
 
     // Compute instantaneous frequency
     let inst_freq = instantaneous_frequency(samples, config.sample_rate);
@@ -112,7 +137,8 @@ pub fn estimate_modulation(samples: &[Sample], config: &ModulationConfig) -> Mod
     let env_flatness = spectral_flatness_simple(&envelope);
 
     // Classification decision tree
-    let (mod_type, confidence) = classify(env_cv, freq_std, kurtosis, env_flatness, config.sample_rate);
+    let (mod_type, confidence) =
+        classify(env_cv, freq_std, kurtosis, env_flatness, config.sample_rate);
 
     // Compute specific parameters based on detected type
     let am_d = match mod_type {
@@ -120,7 +146,9 @@ pub fn estimate_modulation(samples: &[Sample], config: &ModulationConfig) -> Mod
         _ => None,
     };
     let fm_dev = match mod_type {
-        ModulationType::FM | ModulationType::FSK { .. } => Some(fm_deviation(samples, config.sample_rate)),
+        ModulationType::FM | ModulationType::FSK { .. } => {
+            Some(fm_deviation(samples, config.sample_rate))
+        }
         _ => None,
     };
     let sym_rate = match mod_type {
@@ -263,7 +291,10 @@ pub fn am_depth(samples: &[Sample]) -> f32 {
         return 0.0;
     }
 
-    let envelope: Vec<f32> = samples.iter().map(|s| (s.re * s.re + s.im * s.im).sqrt()).collect();
+    let envelope: Vec<f32> = samples
+        .iter()
+        .map(|s| (s.re * s.re + s.im * s.im).sqrt())
+        .collect();
     let a_max = envelope.iter().cloned().fold(0.0f32, f32::max);
     let a_min = envelope.iter().cloned().fold(f32::INFINITY, f32::min);
 
@@ -382,7 +413,13 @@ mod tests {
             .collect()
     }
 
-    fn make_am(n: usize, carrier_freq: f32, mod_freq: f32, depth: f32, sample_rate: f32) -> Vec<Sample> {
+    fn make_am(
+        n: usize,
+        carrier_freq: f32,
+        mod_freq: f32,
+        depth: f32,
+        sample_rate: f32,
+    ) -> Vec<Sample> {
         (0..n)
             .map(|i| {
                 let t = i as f32 / sample_rate;
@@ -393,7 +430,13 @@ mod tests {
             .collect()
     }
 
-    fn make_fm(n: usize, carrier_freq: f32, deviation: f32, mod_freq: f32, sample_rate: f32) -> Vec<Sample> {
+    fn make_fm(
+        n: usize,
+        carrier_freq: f32,
+        deviation: f32,
+        mod_freq: f32,
+        sample_rate: f32,
+    ) -> Vec<Sample> {
         (0..n)
             .map(|i| {
                 let t = i as f32 / sample_rate;
@@ -407,7 +450,10 @@ mod tests {
     #[test]
     fn detect_cw() {
         let samples = make_cw(8192, 1000.0, 48000.0);
-        let config = ModulationConfig { sample_rate: 48000.0, fft_size: 0 };
+        let config = ModulationConfig {
+            sample_rate: 48000.0,
+            fft_size: 0,
+        };
         let report = estimate_modulation(&samples, &config);
         assert!(
             matches!(report.modulation_type, ModulationType::CW),
@@ -420,7 +466,10 @@ mod tests {
     #[test]
     fn detect_am() {
         let samples = make_am(8192, 5000.0, 400.0, 0.4, 48000.0);
-        let config = ModulationConfig { sample_rate: 48000.0, fft_size: 0 };
+        let config = ModulationConfig {
+            sample_rate: 48000.0,
+            fft_size: 0,
+        };
         let report = estimate_modulation(&samples, &config);
         assert!(
             matches!(report.modulation_type, ModulationType::AM),
@@ -432,7 +481,10 @@ mod tests {
     #[test]
     fn detect_fm() {
         let samples = make_fm(8192, 5000.0, 5000.0, 400.0, 48000.0);
-        let config = ModulationConfig { sample_rate: 48000.0, fft_size: 0 };
+        let config = ModulationConfig {
+            sample_rate: 48000.0,
+            fft_size: 0,
+        };
         let report = estimate_modulation(&samples, &config);
         assert!(
             matches!(report.modulation_type, ModulationType::FM),
@@ -504,7 +556,10 @@ mod tests {
                 Sample::new(x * 0.01, y * 0.01)
             })
             .collect();
-        let config = ModulationConfig { sample_rate: 48000.0, fft_size: 0 };
+        let config = ModulationConfig {
+            sample_rate: 48000.0,
+            fft_size: 0,
+        };
         let report = estimate_modulation(&samples, &config);
         // Should not detect AM/FM/CW with high confidence
         assert!(
@@ -518,21 +573,43 @@ mod tests {
     fn classify_constant_envelope() {
         // FM has constant envelope
         let samples = make_fm(8192, 5000.0, 5000.0, 400.0, 48000.0);
-        let envelope: Vec<f32> = samples.iter().map(|s| (s.re * s.re + s.im * s.im).sqrt()).collect();
+        let envelope: Vec<f32> = samples
+            .iter()
+            .map(|s| (s.re * s.re + s.im * s.im).sqrt())
+            .collect();
         let mean = envelope.iter().map(|&v| v as f64).sum::<f64>() / envelope.len() as f64;
-        let std = (envelope.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / envelope.len() as f64).sqrt();
+        let std = (envelope
+            .iter()
+            .map(|&v| (v as f64 - mean).powi(2))
+            .sum::<f64>()
+            / envelope.len() as f64)
+            .sqrt();
         let cv = std / mean;
-        assert!(cv < 0.15, "FM should have constant envelope (low CV), got {cv}");
+        assert!(
+            cv < 0.15,
+            "FM should have constant envelope (low CV), got {cv}"
+        );
     }
 
     #[test]
     fn classify_varying_envelope() {
         // AM has varying envelope
         let samples = make_am(8192, 5000.0, 400.0, 0.8, 48000.0);
-        let envelope: Vec<f32> = samples.iter().map(|s| (s.re * s.re + s.im * s.im).sqrt()).collect();
+        let envelope: Vec<f32> = samples
+            .iter()
+            .map(|s| (s.re * s.re + s.im * s.im).sqrt())
+            .collect();
         let mean = envelope.iter().map(|&v| v as f64).sum::<f64>() / envelope.len() as f64;
-        let std = (envelope.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / envelope.len() as f64).sqrt();
+        let std = (envelope
+            .iter()
+            .map(|&v| (v as f64 - mean).powi(2))
+            .sum::<f64>()
+            / envelope.len() as f64)
+            .sqrt();
         let cv = std / mean;
-        assert!(cv > 0.1, "AM should have varying envelope (higher CV), got {cv}");
+        assert!(
+            cv > 0.1,
+            "AM should have varying envelope (higher CV), got {cv}"
+        );
     }
 }

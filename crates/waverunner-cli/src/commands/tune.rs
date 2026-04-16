@@ -36,8 +36,7 @@ pub struct TuneArgs {
 }
 
 pub async fn run(args: TuneArgs, device_index: u32) -> Result<()> {
-    let gain_mode = wavecore::util::parse_gain(&args.gain)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
@@ -51,8 +50,8 @@ pub async fn run(args: TuneArgs, device_index: u32) -> Result<()> {
     };
 
     let registry = DecoderRegistry::new();
-    let (session, events) = SessionManager::new(config, registry)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (session, events) =
+        SessionManager::new(config, registry).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     println!(
         "Tuned to {:.6} MHz | Rate: {:.3} MS/s | Gain: {} | FFT: {} | P_fa: {:.0e}",

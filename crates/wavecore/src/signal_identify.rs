@@ -90,9 +90,9 @@ pub fn identify_instant(freq_hz: f64, db: &FrequencyDb) -> IdentifyResult {
     // Compute overall confidence
     let confidence = match (&band_name, &classifier_match) {
         (Some(_), Some(cm)) => (0.5 + cm.confidence) / 2.0, // Both agree
-        (Some(_), None) => 0.4,                              // DB hit only
-        (None, Some(cm)) => cm.confidence * 0.8,             // Classifier only
-        (None, None) => 0.0,                                 // Nothing
+        (Some(_), None) => 0.4,                             // DB hit only
+        (None, Some(cm)) => cm.confidence * 0.8,            // Classifier only
+        (None, None) => 0.0,                                // Nothing
     };
 
     // Prefer classifier decoder over DB decoder
@@ -132,17 +132,17 @@ pub fn format_result(result: &IdentifyResult) -> String {
 
     let freq_mhz = result.frequency_hz / 1e6;
     lines.push(format!("Frequency: {freq_mhz:.6} MHz"));
-    lines.push(format!(
-        "Confidence: {:.0}%",
-        result.confidence * 100.0
-    ));
+    lines.push(format!("Confidence: {:.0}%", result.confidence * 100.0));
 
     if let Some(ref band) = result.band_name {
         lines.push(format!("Band: {band}"));
     }
 
     if let Some(ref modulation) = result.modulation_estimate {
-        lines.push(format!("Expected modulation: {}", modulation.to_uppercase()));
+        lines.push(format!(
+            "Expected modulation: {}",
+            modulation.to_uppercase()
+        ));
     }
 
     if let Some(ref cm) = result.classifier_match {

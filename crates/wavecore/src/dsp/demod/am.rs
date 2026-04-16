@@ -5,7 +5,7 @@
 //! ## Envelope Detection
 //!
 //! The simplest and most robust AM demodulator:
-//!   y[n] = |z[n]| = √(I² + Q²)
+//!   `y[n] = |z[n]| = √(I² + Q²)`
 //!
 //! Extracts the instantaneous amplitude of the analytic signal. Works well
 //! when carrier is present (standard AM broadcast). The DC component from
@@ -14,9 +14,9 @@
 //! ## Synchronous Detection
 //!
 //! Uses a PLL to lock to the carrier, then multiplies by the recovered carrier:
-//!   y[n] = Re(z[n] · e^{−jθ[n]})
+//!   `y[n] = Re(z[n] · e^{−jθ[n]})`
 //!
-//! where θ[n] is the PLL's phase estimate. Advantages over envelope:
+//! where `θ[n]` is the PLL's phase estimate. Advantages over envelope:
 //! - 3 dB better SNR at low SNR (coherent gain)
 //! - Handles selective fading (carrier fade doesn't destroy signal)
 //! - Works for suppressed-carrier DSB (with Costas loop)
@@ -146,8 +146,7 @@ impl Demodulator for AmDemod {
                 Ok(())
             }
             "bandwidth" => {
-                self.audio_lpf =
-                    iir::butter(4, value, iir::FilterBand::Lowpass, self.sample_rate);
+                self.audio_lpf = iir::butter(4, value, iir::FilterBand::Lowpass, self.sample_rate);
                 Ok(())
             }
             _ => Err(format!("Unknown AM parameter: {key}")),
@@ -230,10 +229,12 @@ mod tests {
         assert_eq!(audio.len(), n);
 
         // Audio should have nonzero energy (successful demodulation)
-        let rms: f32 = (audio[4000..].iter().map(|&x| x * x).sum::<f32>()
-            / (n - 4000) as f32)
-            .sqrt();
-        assert!(rms > 0.01, "Sync demod should produce audio: rms = {rms:.4}");
+        let rms: f32 =
+            (audio[4000..].iter().map(|&x| x * x).sum::<f32>() / (n - 4000) as f32).sqrt();
+        assert!(
+            rms > 0.01,
+            "Sync demod should produce audio: rms = {rms:.4}"
+        );
     }
 
     #[test]
@@ -246,8 +247,7 @@ mod tests {
         let input = vec![Sample::new(1.0, 0.0); 16000];
         let audio = demod.process(&input);
 
-        let late_dc: f32 =
-            audio[8000..].iter().sum::<f32>() / 8000.0;
+        let late_dc: f32 = audio[8000..].iter().sum::<f32>() / 8000.0;
         assert!(
             late_dc.abs() < 0.05,
             "DC should be removed: mean = {late_dc:.4}"

@@ -55,7 +55,12 @@ impl Agc {
     /// `attack_time_s`: time to reach 63% of step increase (e.g., 0.001)
     /// `decay_time_s`: time to reach 63% of step decrease (e.g., 0.1)
     /// `sample_rate`: input sample rate in Hz
-    pub fn new(target_power_dbfs: f64, attack_time_s: f64, decay_time_s: f64, sample_rate: f64) -> Self {
+    pub fn new(
+        target_power_dbfs: f64,
+        attack_time_s: f64,
+        decay_time_s: f64,
+        sample_rate: f64,
+    ) -> Self {
         // Time constant to IIR coefficient: α = 1 − e^{−1/(τ·fs)}
         let alpha_attack = 1.0 - (-1.0 / (attack_time_s * sample_rate)).exp();
         let alpha_decay = 1.0 - (-1.0 / (decay_time_s * sample_rate)).exp();
@@ -285,11 +290,7 @@ mod tests {
         agc.process(&mut samples);
 
         // After convergence, output should be stronger
-        let output_power: f32 = samples[40000..]
-            .iter()
-            .map(|s| s.norm_sqr())
-            .sum::<f32>()
-            / 8000.0;
+        let output_power: f32 = samples[40000..].iter().map(|s| s.norm_sqr()).sum::<f32>() / 8000.0;
         let output_db = 10.0 * (output_power as f64).log10();
 
         assert!(

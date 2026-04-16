@@ -109,7 +109,10 @@ pub fn occupied_bandwidth(
     let n = spectrum_db.len();
 
     // Convert to linear power for integration
-    let powers: Vec<f64> = spectrum_db.iter().map(|&db| 10f64.powf(db as f64 / 10.0)).collect();
+    let powers: Vec<f64> = spectrum_db
+        .iter()
+        .map(|&db| 10f64.powf(db as f64 / 10.0))
+        .collect();
     let total_power: f64 = powers.iter().sum();
 
     if total_power <= 0.0 {
@@ -130,7 +133,11 @@ pub fn occupied_bandwidth(
     while accumulated < target_power && (left > 0 || right < n - 1) {
         // Expand whichever side has more power
         let left_power = if left > 0 { powers[left - 1] } else { 0.0 };
-        let right_power = if right < n - 1 { powers[right + 1] } else { 0.0 };
+        let right_power = if right < n - 1 {
+            powers[right + 1]
+        } else {
+            0.0
+        };
 
         if left_power >= right_power && left > 0 {
             left -= 1;
@@ -223,7 +230,10 @@ pub fn papr(spectrum_db: &[f32]) -> f32 {
         return 0.0;
     }
 
-    let powers: Vec<f64> = spectrum_db.iter().map(|&db| 10f64.powf(db as f64 / 10.0)).collect();
+    let powers: Vec<f64> = spectrum_db
+        .iter()
+        .map(|&db| 10f64.powf(db as f64 / 10.0))
+        .collect();
     let avg = powers.iter().sum::<f64>() / powers.len() as f64;
     let peak = powers.iter().cloned().fold(0.0f64, f64::max);
 
@@ -274,9 +284,17 @@ pub fn measure_signal(
 ) -> MeasurementReport {
     let bw_3db = bandwidth_ndb(spectrum_db, 3.0, sample_rate);
     let bw_6db = bandwidth_ndb(spectrum_db, 6.0, sample_rate);
-    let (obw, obw_pct) =
-        occupied_bandwidth(spectrum_db, config.signal_center_bin, config.obw_threshold_db, sample_rate);
-    let ch_power = channel_power(spectrum_db, config.signal_center_bin, config.signal_width_bins);
+    let (obw, obw_pct) = occupied_bandwidth(
+        spectrum_db,
+        config.signal_center_bin,
+        config.obw_threshold_db,
+        sample_rate,
+    );
+    let ch_power = channel_power(
+        spectrum_db,
+        config.signal_center_bin,
+        config.signal_width_bins,
+    );
     let (acpr_lo, acpr_hi) = acpr(
         spectrum_db,
         config.signal_center_bin,
@@ -304,7 +322,13 @@ mod tests {
     use super::*;
 
     /// Generate a synthetic spectrum with a Gaussian-shaped signal at center.
-    fn make_tone_spectrum(n: usize, center: usize, width_bins: usize, peak_db: f32, floor_db: f32) -> Vec<f32> {
+    fn make_tone_spectrum(
+        n: usize,
+        center: usize,
+        width_bins: usize,
+        peak_db: f32,
+        floor_db: f32,
+    ) -> Vec<f32> {
         let mut spectrum = vec![floor_db; n];
         let sigma = width_bins as f32 / 4.0; // ~95% power within width_bins
         for (i, val) in spectrum.iter_mut().enumerate() {
@@ -330,7 +354,10 @@ mod tests {
         let spectrum = make_tone_spectrum(1024, 512, 40, -10.0, -80.0);
         let bw_3 = bandwidth_ndb(&spectrum, 3.0, 2.048e6);
         let bw_6 = bandwidth_ndb(&spectrum, 6.0, 2.048e6);
-        assert!(bw_6 > bw_3, "6 dB BW ({bw_6}) must be wider than 3 dB BW ({bw_3})");
+        assert!(
+            bw_6 > bw_3,
+            "6 dB BW ({bw_6}) must be wider than 3 dB BW ({bw_3})"
+        );
     }
 
     #[test]
@@ -347,7 +374,10 @@ mod tests {
         let spectrum = vec![-30.0f32; 1024];
         let power = channel_power(&spectrum, 512, 100);
         let expected = -30.0 + 10.0 * (100.0f32).log10();
-        assert!((power - expected).abs() < 0.1, "Expected ~{expected}, got {power}");
+        assert!(
+            (power - expected).abs() < 0.1,
+            "Expected ~{expected}, got {power}"
+        );
     }
 
     #[test]
@@ -376,7 +406,10 @@ mod tests {
         }
         let (lo, _hi) = acpr(&spectrum, 512, 44, 44);
         // Lower adjacent is 20 dB below main
-        assert!(lo > -25.0 && lo < -15.0, "Lower ACPR should be ~-20 dBc, got {lo}");
+        assert!(
+            lo > -25.0 && lo < -15.0,
+            "Lower ACPR should be ~-20 dBc, got {lo}"
+        );
     }
 
     #[test]
@@ -392,17 +425,24 @@ mod tests {
         let mut spectrum = vec![-80.0f32; 1024];
         spectrum[512] = -10.0;
         let p = papr(&spectrum);
-        assert!(p > 20.0, "Single tone in noise should have high PAPR, got {p}");
+        assert!(
+            p > 20.0,
+            "Single tone in noise should have high PAPR, got {p}"
+        );
     }
 
     #[test]
     fn measure_empty_spectrum() {
-        let report = measure_signal(&[], &MeasureConfig {
-            signal_center_bin: 0,
-            signal_width_bins: 10,
-            adjacent_width_bins: 10,
-            obw_threshold_db: 26.0,
-        }, 2.048e6);
+        let report = measure_signal(
+            &[],
+            &MeasureConfig {
+                signal_center_bin: 0,
+                signal_width_bins: 10,
+                adjacent_width_bins: 10,
+                obw_threshold_db: 26.0,
+            },
+            2.048e6,
+        );
         assert_eq!(report.bandwidth_3db_hz, 0.0);
     }
 
@@ -415,6 +455,9 @@ mod tests {
         spectrum[513] = -20.0;
         let (bin, offset) = peak_frequency_offset(&spectrum, 2.048e6);
         assert_eq!(bin, 512);
-        assert!(offset.abs() < 100.0, "Centered peak should have ~0 offset, got {offset}");
+        assert!(
+            offset.abs() < 100.0,
+            "Centered peak should have ~0 offset, got {offset}"
+        );
     }
 }

@@ -65,12 +65,18 @@ pub fn run(args: BandsArgs) -> Result<()> {
     };
 
     if !freqs.is_empty() {
-        println!("\n{:<24} {:>14}  {:<8} {:<10}", "Channel", "Frequency", "Mode", "Decoder");
+        println!(
+            "\n{:<24} {:>14}  {:<8} {:<10}",
+            "Channel", "Frequency", "Mode", "Decoder"
+        );
         println!("{}", "-".repeat(62));
         for freq in &freqs {
             let f = wavecore::util::format_freq(freq.freq_hz);
             let decoder = freq.decoder.unwrap_or("-");
-            println!("{:<24} {:>14}  {:<8} {:<10}", freq.label, f, freq.modulation, decoder);
+            println!(
+                "{:<24} {:>14}  {:<8} {:<10}",
+                freq.label, f, freq.modulation, decoder
+            );
         }
     }
 

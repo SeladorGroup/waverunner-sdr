@@ -21,8 +21,8 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -43,27 +43,37 @@ use crate::dsp::statistics::signal_statistics;
 use crate::hardware::rtlsdr::RtlSdrDevice;
 use crate::hardware::{DeviceEnumerator, SdrDevice};
 use crate::recording::{RawIqWriter, WavIqWriter};
-use crate::session::{
-    Command, DecodedMessage, DemodConfig, DemodVisData, Event, HealthStatus, LatencyBreakdown,
-    RecordFormat, SessionConfig, SessionStats, SpectrumFrame, StatusUpdate, TimelineExportFormat,
-};
-use crate::session::checkpoint::{self, SessionCheckpoint, CHECKPOINT_SCHEMA_VERSION};
+use crate::session::checkpoint::{self, CHECKPOINT_SCHEMA_VERSION, SessionCheckpoint};
 use crate::session::timeline::{AnnotationKind, SessionTimeline, TimelineEntry};
+use crate::session::{
+    Command, DecodedMessage, Event, HealthStatus, LatencyBreakdown, RecordFormat, SessionConfig,
+    SessionStats, SpectrumFrame, StatusUpdate, TimelineExportFormat,
+};
+#[cfg(feature = "audio")]
+use crate::session::{DemodConfig, DemodVisData};
 use crate::sigmf::SigMfWriter;
 use crate::types::{Sample, SampleBlock};
 
-// Demod chain imports
-use crate::dsp::agc::Agc;
+// DDC is used unconditionally for decoder sample-rate routing
 use crate::dsp::ddc::Ddc;
-use crate::dsp::demod::am::{AmDemod, AmMode};
-use crate::dsp::demod::cw::CwDemod;
-use crate::dsp::demod::fm::{FmDemod, FmMode};
-use crate::dsp::demod::ssb::{SsbDemod, Sideband};
-use crate::dsp::demod::{Demodulator, mode_defaults};
-use crate::dsp::resample::PolyphaseResampler;
 
+// Demod chain imports (audio feature only)
 #[cfg(feature = "audio")]
 use crate::audio::AudioSink;
+#[cfg(feature = "audio")]
+use crate::dsp::agc::Agc;
+#[cfg(feature = "audio")]
+use crate::dsp::demod::am::{AmDemod, AmMode};
+#[cfg(feature = "audio")]
+use crate::dsp::demod::cw::CwDemod;
+#[cfg(feature = "audio")]
+use crate::dsp::demod::fm::{FmDemod, FmMode};
+#[cfg(feature = "audio")]
+use crate::dsp::demod::ssb::{Sideband, SsbDemod};
+#[cfg(feature = "audio")]
+use crate::dsp::demod::{Demodulator, mode_defaults};
+#[cfg(feature = "audio")]
+use crate::dsp::resample::PolyphaseResampler;
 
 // ============================================================================
 // Load shedding
@@ -107,7 +117,11 @@ impl LoadShedder {
             let changed = self.level;
             self.prev_level = self.level;
             if self.level > 0 {
-                tracing::warn!(level = self.level, fill_pct = fill * 100.0, "Load shedding activated");
+                tracing::warn!(
+                    level = self.level,
+                    fill_pct = fill * 100.0,
+                    "Load shedding activated"
+                );
             } else {
                 tracing::info!("Load shedding deactivated — pipeline caught up");
             }
@@ -205,7 +219,10 @@ fn write_sigmf_sidecar(path: &std::path::Path, center_freq: f64, sample_rate: f6
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to create SigMF sidecar {}: {e}", meta_path.display());
+            tracing::warn!(
+                "Failed to create SigMF sidecar {}: {e}",
+                meta_path.display()
+            );
         }
     }
 }
@@ -228,24 +245,65 @@ impl RecordingState {
 // ============================================================================
 
 #[cfg(feature = "audio")]
+enum AudioResampler {
+    Mono(PolyphaseResampler),
+    Stereo {
+        left: PolyphaseResampler,
+        right: PolyphaseResampler,
+    },
+}
+
+#[cfg(feature = "audio")]
 struct DemodState {
     ddc: Ddc,
     agc: Agc,
     demod: Box<dyn Demodulator>,
-    resampler: Option<PolyphaseResampler>,
+    resampler: Option<AudioResampler>,
     audio_sink: AudioSink,
     wav_writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
     total_audio_samples: u64,
+}
+
+#[cfg(feature = "audio")]
+impl AudioResampler {
+    fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        match self {
+            AudioResampler::Mono(resampler) => {
+                let iq: Vec<Sample> = input.iter().map(|&s| Sample::new(s, 0.0)).collect();
+                let resampled = resampler.process(&iq);
+                resampled.into_iter().map(|s| s.re).collect()
+            }
+            AudioResampler::Stereo { left, right } => {
+                let frames = input.len() / 2;
+                let mut left_in = Vec::with_capacity(frames);
+                let mut right_in = Vec::with_capacity(frames);
+
+                for frame in input.chunks_exact(2) {
+                    left_in.push(Sample::new(frame[0], 0.0));
+                    right_in.push(Sample::new(frame[1], 0.0));
+                }
+
+                let left_out = left.process(&left_in);
+                let right_out = right.process(&right_in);
+                let frames_out = left_out.len().min(right_out.len());
+                let mut interleaved = Vec::with_capacity(frames_out * 2);
+
+                for idx in 0..frames_out {
+                    interleaved.push(left_out[idx].re);
+                    interleaved.push(right_out[idx].re);
+                }
+
+                interleaved
+            }
+        }
+    }
 }
 
 /// Build a demodulation chain from configuration.
 ///
 /// Creates DDC → AGC → Demodulator → Resampler → AudioSink.
 #[cfg(feature = "audio")]
-fn build_demod_state(
-    config: &DemodConfig,
-    sample_rate: f64,
-) -> Result<DemodState, String> {
+fn build_demod_state(config: &DemodConfig, sample_rate: f64) -> Result<DemodState, String> {
     let defaults = mode_defaults(&config.mode)
         .ok_or_else(|| format!("Unknown demod mode: {}", config.mode))?;
 
@@ -282,25 +340,30 @@ fn build_demod_state(
         demod.set_parameter("squelch", sq).ok();
     }
 
+    let source_channels = if config.mode == "wfm-stereo" { 2 } else { 1 };
+    let audio_sink = AudioSink::new(config.audio_rate, source_channels)
+        .map_err(|e| format!("Failed to create audio sink: {e}"))?;
+
     let demod_out_rate = demod.sample_rate_out();
-    let resampler = if (demod_out_rate - config.audio_rate as f64).abs() > 1.0 {
-        Some(PolyphaseResampler::new(
-            config.audio_rate as usize,
-            demod_out_rate as usize,
-            128,
-            0.0,
-        ))
+    let sink_rate = audio_sink.sample_rate() as f64;
+    let resampler = if (demod_out_rate - sink_rate).abs() > 1.0 {
+        let out_rate = audio_sink.sample_rate() as usize;
+        let in_rate = demod_out_rate as usize;
+        Some(if source_channels == 2 {
+            AudioResampler::Stereo {
+                left: PolyphaseResampler::new(out_rate, in_rate, 128, 0.0),
+                right: PolyphaseResampler::new(out_rate, in_rate, 128, 0.0),
+            }
+        } else {
+            AudioResampler::Mono(PolyphaseResampler::new(out_rate, in_rate, 128, 0.0))
+        })
     } else {
         None
     };
 
-    let audio_sink = AudioSink::new(config.audio_rate)
-        .map_err(|e| format!("Failed to create audio sink: {e}"))?;
-
     let wav_writer = if let Some(ref path) = config.output_wav {
-        let channels = if config.mode == "wfm-stereo" { 2 } else { 1 };
         let spec = hound::WavSpec {
-            channels,
+            channels: source_channels as u16,
             sample_rate: audio_sink.sample_rate(),
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
@@ -360,7 +423,7 @@ impl SessionManager {
 
     /// Create a new SessionManager with a caller-provided device.
     ///
-    /// This enables replay mode (via [`ReplayDevice`]) and testing
+    /// This enables replay mode (via `ReplayDevice`) and testing
     /// without hardware. The device is configured with the session's
     /// frequency, sample rate, gain, and PPM settings before streaming
     /// begins.
@@ -590,9 +653,11 @@ fn run_processing_loop(
             match cmd {
                 Command::Tune(freq) => {
                     if let Err(e) = device.set_frequency(freq) {
-                        evt_tx
-                            .send(Event::Error(format!("Failed to tune: {e}")))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error(format!("Failed to tune: {e}")),
+                            &events_dropped,
+                        );
                     } else {
                         config.frequency = freq;
                         shared_freq.store(freq.to_bits(), Ordering::Relaxed);
@@ -600,31 +665,39 @@ fn run_processing_loop(
                             timestamp_s: timeline.elapsed_s(),
                             freq_hz: freq,
                         });
-                        evt_tx
-                            .send(Event::Status(StatusUpdate::FrequencyChanged(freq)))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Status(StatusUpdate::FrequencyChanged(freq)),
+                            &events_dropped,
+                        );
                     }
                 }
                 Command::SetGain(mode) => {
                     if let Err(e) = device.set_gain(mode) {
-                        evt_tx
-                            .send(Event::Error(format!("Failed to set gain: {e}")))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error(format!("Failed to set gain: {e}")),
+                            &events_dropped,
+                        );
                     } else {
                         timeline.log_event(TimelineEntry::GainChange {
                             timestamp_s: timeline.elapsed_s(),
                             gain: format!("{mode:?}"),
                         });
-                        evt_tx
-                            .send(Event::Status(StatusUpdate::GainChanged(mode)))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Status(StatusUpdate::GainChanged(mode)),
+                            &events_dropped,
+                        );
                     }
                 }
                 Command::SetSampleRate(rate) => {
                     if let Err(e) = device.set_sample_rate(rate) {
-                        evt_tx
-                            .send(Event::Error(format!("Failed to set sample rate: {e}")))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error(format!("Failed to set sample rate: {e}")),
+                            &events_dropped,
+                        );
                     } else {
                         config.sample_rate = rate;
                         shared_rate.store(rate.to_bits(), Ordering::Relaxed);
@@ -643,11 +716,13 @@ fn run_processing_loop(
                                     demod_state = Some(state);
                                 }
                                 Err(e) => {
-                                    evt_tx
-                                        .send(Event::Error(format!(
+                                    try_send_event(
+                                        &evt_tx,
+                                        Event::Error(format!(
                                             "Failed to rebuild demod after rate change: {e}"
-                                        )))
-                                        .ok();
+                                        )),
+                                        &events_dropped,
+                                    );
                                     active_demod_config = None;
                                 }
                             }
@@ -657,38 +732,74 @@ fn run_processing_loop(
                 Command::EnableDecoder(name) => {
                     // Prevent duplicate decoder instances
                     if active_decoders.iter().any(|h| h.name() == name) {
-                        evt_tx
-                            .send(Event::Status(StatusUpdate::DecoderEnabled(name)))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Status(StatusUpdate::DecoderEnabled(name)),
+                            &events_dropped,
+                        );
                     } else if let Some(decoder) = decoder_registry.create(&name) {
+                        // Check if the decoder needs a DDC for sample rate conversion.
+                        // Decoders declare their required sample rate via requirements().
+                        // If it differs from the hardware rate, create a DDC to decimate.
+                        let reqs = decoder.requirements();
+                        let hw_rate = f64::from_bits(shared_rate.load(Ordering::Relaxed));
+                        let hw_freq = f64::from_bits(shared_freq.load(Ordering::Relaxed));
+                        let rate_ratio = hw_rate / reqs.sample_rate;
+
+                        let ddc = if rate_ratio > 1.5 {
+                            // Decoder needs decimation — create a DDC chain.
+                            // center_frequency == 0.0 means "same as hardware" (no shift).
+                            let freq_offset = if reqs.center_frequency == 0.0 {
+                                0.0
+                            } else {
+                                reqs.center_frequency - hw_freq
+                            };
+                            let ddc =
+                                Ddc::new(freq_offset, hw_rate, reqs.sample_rate, reqs.bandwidth);
+                            tracing::info!(
+                                "Decoder '{}' needs {}→{} Hz — DDC created (offset {:.0} Hz, {:.1}x decimation)",
+                                name,
+                                hw_rate,
+                                reqs.sample_rate,
+                                freq_offset,
+                                rate_ratio
+                            );
+                            Some(ddc)
+                        } else {
+                            // Decoder operates at native hardware rate (e.g., ADS-B at 2 MS/s)
+                            None
+                        };
+
                         let handle =
-                            DecoderHandle::spawn(decoder, decoded_tx.clone(), 32);
+                            DecoderHandle::spawn_with_ddc(decoder, decoded_tx.clone(), 32, ddc);
                         if handle.is_alive() {
                             timeline.log_event(TimelineEntry::DecoderEnabled {
                                 timestamp_s: timeline.elapsed_s(),
                                 name: name.clone(),
                             });
-                            evt_tx
-                                .send(Event::Status(StatusUpdate::DecoderEnabled(name)))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Status(StatusUpdate::DecoderEnabled(name)),
+                                &events_dropped,
+                            );
                             active_decoders.push(handle);
                         } else {
-                            evt_tx
-                                .send(Event::Error(format!(
-                                    "Failed to start decoder thread: {name}"
-                                )))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Error(format!("Failed to start decoder thread: {name}")),
+                                &events_dropped,
+                            );
                         }
                     } else {
-                        evt_tx
-                            .send(Event::Error(format!("Unknown decoder: {name}")))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error(format!("Unknown decoder: {name}")),
+                            &events_dropped,
+                        );
                     }
                 }
                 Command::DisableDecoder(name) => {
-                    let idx = active_decoders
-                        .iter()
-                        .position(|h| h.name() == name);
+                    let idx = active_decoders.iter().position(|h| h.name() == name);
                     if let Some(idx) = idx {
                         let handle = active_decoders.remove(idx);
                         handle.stop();
@@ -696,9 +807,11 @@ fn run_processing_loop(
                             timestamp_s: timeline.elapsed_s(),
                             name: name.clone(),
                         });
-                        evt_tx
-                            .send(Event::Status(StatusUpdate::DecoderDisabled(name)))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Status(StatusUpdate::DecoderDisabled(name)),
+                            &events_dropped,
+                        );
                     }
                 }
 
@@ -728,14 +841,18 @@ fn run_processing_loop(
                                 timestamp_s: timeline.elapsed_s(),
                                 path: path.display().to_string(),
                             });
-                            evt_tx
-                                .send(Event::Status(StatusUpdate::RecordingStarted(path)))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Status(StatusUpdate::RecordingStarted(path)),
+                                &events_dropped,
+                            );
                         }
                         Err(e) => {
-                            evt_tx
-                                .send(Event::Error(format!("Failed to start recording: {e}")))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Error(format!("Failed to start recording: {e}")),
+                                &events_dropped,
+                            );
                         }
                     }
                 }
@@ -747,11 +864,11 @@ fn run_processing_loop(
                             Ok(n) => n,
                             Err(e) => {
                                 tracing::error!("Recording finalize error: {e}");
-                                evt_tx
-                                    .send(Event::Error(format!(
-                                        "Recording finalize error: {e}"
-                                    )))
-                                    .ok();
+                                try_send_event(
+                                    &evt_tx,
+                                    Event::Error(format!("Recording finalize error: {e}")),
+                                    &events_dropped,
+                                );
                                 rec.samples_written
                             }
                         };
@@ -762,9 +879,11 @@ fn run_processing_loop(
                             timestamp_s: timeline.elapsed_s(),
                             samples: total,
                         });
-                        evt_tx
-                            .send(Event::Status(StatusUpdate::RecordingStopped(total)))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Status(StatusUpdate::RecordingStopped(total)),
+                            &events_dropped,
+                        );
                     }
                 }
 
@@ -776,25 +895,29 @@ fn run_processing_loop(
                             Ok(state) => {
                                 demod_state = Some(state);
                                 active_demod_config = Some(demod_config);
-                                evt_tx
-                                    .send(Event::Status(StatusUpdate::Streaming))
-                                    .ok();
+                                try_send_event(
+                                    &evt_tx,
+                                    Event::Status(StatusUpdate::Streaming),
+                                    &events_dropped,
+                                );
                             }
                             Err(e) => {
-                                evt_tx
-                                    .send(Event::Error(format!("Failed to start demod: {e}")))
-                                    .ok();
+                                try_send_event(
+                                    &evt_tx,
+                                    Event::Error(format!("Failed to start demod: {e}")),
+                                    &events_dropped,
+                                );
                             }
                         }
                     }
                     #[cfg(not(feature = "audio"))]
                     {
                         let _ = demod_config;
-                        evt_tx
-                            .send(Event::Error(
-                                "Demod requires the 'audio' feature".to_string(),
-                            ))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error("Demod requires the 'audio' feature".to_string()),
+                            &events_dropped,
+                        );
                     }
                 }
                 Command::StopDemod => {
@@ -843,22 +966,21 @@ fn run_processing_loop(
                         }
                         analysis::AnalysisRequest::CompareSpectra => {
                             if let Some(ref reference) = reference_spectrum {
-                                let report =
-                                    analysis::comparison::compare_spectra(
-                                        &analysis::comparison::CompareConfig {
-                                            reference: reference.clone(),
-                                            current: last_spectrum_db.clone(),
-                                            sample_rate: config.sample_rate,
-                                            threshold_db: 6.0,
-                                        },
-                                    );
+                                let report = analysis::comparison::compare_spectra(
+                                    &analysis::comparison::CompareConfig {
+                                        reference: reference.clone(),
+                                        current: last_spectrum_db.clone(),
+                                        sample_rate: config.sample_rate,
+                                        threshold_db: 6.0,
+                                    },
+                                );
                                 analysis::AnalysisResult::Comparison(report)
                             } else {
-                                evt_tx
-                                    .send(Event::Error(
-                                        "No reference spectrum captured".to_string(),
-                                    ))
-                                    .ok();
+                                try_send_event(
+                                    &evt_tx,
+                                    Event::Error("No reference spectrum captured".to_string()),
+                                    &events_dropped,
+                                );
                                 continue;
                             }
                         }
@@ -870,9 +992,11 @@ fn run_processing_loop(
                             if let Some(ref t) = tracker {
                                 analysis::AnalysisResult::Tracking(t.snapshot())
                             } else {
-                                evt_tx
-                                    .send(Event::Error("Tracking not active".to_string()))
-                                    .ok();
+                                try_send_event(
+                                    &evt_tx,
+                                    Event::Error("Tracking not active".to_string()),
+                                    &events_dropped,
+                                );
                                 continue;
                             }
                         }
@@ -896,43 +1020,51 @@ fn run_processing_loop(
                                     format: format!("{:?}", export_config.format),
                                 },
                                 Err(e) => {
-                                    evt_tx
-                                        .send(Event::Error(format!("Export failed: {e}")))
-                                        .ok();
+                                    try_send_event(
+                                        &evt_tx,
+                                        Event::Error(format!("Export failed: {e}")),
+                                        &events_dropped,
+                                    );
                                     continue;
                                 }
                             }
                         }
                     };
-                    evt_tx
-                        .send(Event::AnalysisResult { id, result })
-                        .ok();
+                    // AnalysisResult is rare and important — use blocking send
+                    // so it is never silently dropped by backpressure.
+                    evt_tx.send(Event::AnalysisResult { id, result }).ok();
                 }
                 Command::CaptureReference => {
                     if last_spectrum_db.is_empty() {
-                        evt_tx
-                            .send(Event::Error(
-                                "Cannot capture reference: no spectrum data yet".into(),
-                            ))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error("Cannot capture reference: no spectrum data yet".into()),
+                            &events_dropped,
+                        );
                     } else {
                         reference_spectrum = Some(last_spectrum_db.clone());
-                        evt_tx
-                            .send(Event::Status(StatusUpdate::AnalysisReferenceCapture))
-                            .ok();
+                        try_send_event(
+                            &evt_tx,
+                            Event::Status(StatusUpdate::AnalysisReferenceCapture),
+                            &events_dropped,
+                        );
                     }
                 }
                 Command::StartTracking => {
                     tracker = Some(SignalTracker::new(1800)); // 30 min at 1 Hz
-                    evt_tx
-                        .send(Event::Status(StatusUpdate::TrackingStarted))
-                        .ok();
+                    try_send_event(
+                        &evt_tx,
+                        Event::Status(StatusUpdate::TrackingStarted),
+                        &events_dropped,
+                    );
                 }
                 Command::StopTracking => {
                     tracker = None;
-                    evt_tx
-                        .send(Event::Status(StatusUpdate::TrackingStopped))
-                        .ok();
+                    try_send_event(
+                        &evt_tx,
+                        Event::Status(StatusUpdate::TrackingStopped),
+                        &events_dropped,
+                    );
                 }
                 Command::Export(mut export_config) => {
                     // Substitute empty spectrum with latest data
@@ -950,20 +1082,24 @@ fn run_processing_loop(
                     }
                     match analysis::export::export_to_file(&export_config) {
                         Ok(path) => {
-                            evt_tx
-                                .send(Event::AnalysisResult {
+                            try_send_event(
+                                &evt_tx,
+                                Event::AnalysisResult {
                                     id: 0,
                                     result: analysis::AnalysisResult::ExportComplete {
                                         path,
                                         format: format!("{:?}", export_config.format),
                                     },
-                                })
-                                .ok();
+                                },
+                                &events_dropped,
+                            );
                         }
                         Err(e) => {
-                            evt_tx
-                                .send(Event::Error(format!("Export failed: {e}")))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Error(format!("Export failed: {e}")),
+                                &events_dropped,
+                            );
                         }
                     }
                 }
@@ -975,7 +1111,7 @@ fn run_processing_loop(
                         _ => AnnotationKind::Bookmark,
                     };
                     let id = timeline.add_annotation(ann_kind, text, config.frequency);
-                    evt_tx.send(Event::AnnotationAdded(id)).ok();
+                    try_send_event(&evt_tx, Event::AnnotationAdded(id), &events_dropped);
                 }
                 Command::ExportTimeline { path, format } => {
                     let result = match format {
@@ -984,15 +1120,19 @@ fn run_processing_loop(
                     };
                     match result {
                         Ok(out_path) => {
-                            evt_tx
-                                .send(Event::Status(StatusUpdate::RecordingStopped(0)))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Status(StatusUpdate::RecordingStopped(0)),
+                                &events_dropped,
+                            );
                             tracing::info!("Timeline exported to {out_path}");
                         }
                         Err(e) => {
-                            evt_tx
-                                .send(Event::Error(format!("Timeline export failed: {e}")))
-                                .ok();
+                            try_send_event(
+                                &evt_tx,
+                                Event::Error(format!("Timeline export failed: {e}")),
+                                &events_dropped,
+                            );
                         }
                     }
                 }
@@ -1031,9 +1171,11 @@ fn run_processing_loop(
                 timestamp_s: timeline.elapsed_s(),
                 level,
             });
-            evt_tx
-                .send(Event::Status(StatusUpdate::LoadShedding(level)))
-                .ok();
+            try_send_event(
+                &evt_tx,
+                Event::Status(StatusUpdate::LoadShedding(level)),
+                &events_dropped,
+            );
         }
 
         let proc_start = Instant::now();
@@ -1047,9 +1189,11 @@ fn run_processing_loop(
         // 2. Recording — write raw IQ after DC removal
         if let Some(ref mut rec) = recording {
             if let Err(e) = rec.writer.write_samples(&samples) {
-                evt_tx
-                    .send(Event::Error(format!("Recording write error: {e}")))
-                    .ok();
+                try_send_event(
+                    &evt_tx,
+                    Event::Error(format!("Recording write error: {e}")),
+                    &events_dropped,
+                );
                 // Stop recording on error
                 if let Some(rec) = recording.take() {
                     let was_raw = rec.writer.is_raw();
@@ -1058,9 +1202,11 @@ fn run_processing_loop(
                     if was_raw {
                         write_sigmf_sidecar(&rec_path, config.frequency, config.sample_rate);
                     }
-                    evt_tx
-                        .send(Event::Status(StatusUpdate::RecordingStopped(total)))
-                        .ok();
+                    try_send_event(
+                        &evt_tx,
+                        Event::Status(StatusUpdate::RecordingStopped(total)),
+                        &events_dropped,
+                    );
                 }
             } else {
                 rec.samples_written += samples.len() as u64;
@@ -1071,51 +1217,57 @@ fn run_processing_loop(
         let demod_start = Instant::now();
         #[cfg(feature = "audio")]
         let agc_gain = if let Some(ref mut ds) = demod_state {
+            let emit_visualization = active_demod_config
+                .as_ref()
+                .map(|cfg| cfg.emit_visualization)
+                .unwrap_or(true);
             let baseband = ds.ddc.process(&samples);
             let mut agc_out = baseband;
             ds.agc.process(&mut agc_out);
 
             let audio = ds.demod.process(&agc_out);
 
-            let audio_out = if let Some(ref mut resampler) = ds.resampler {
-                let iq: Vec<Sample> = audio
-                    .iter()
-                    .map(|&s| Sample::new(s, 0.0))
-                    .collect();
-                let resampled = resampler.process(&iq);
-                resampled.iter().map(|s| s.re).collect::<Vec<f32>>()
-            } else {
-                audio
-            };
+            let sink_muted = ds.audio_sink.volume() <= f32::EPSILON;
+            let should_render_audio = ds.wav_writer.is_some() || !sink_muted;
+            if should_render_audio {
+                let audio_out = if let Some(ref mut resampler) = ds.resampler {
+                    resampler.process(&audio)
+                } else {
+                    audio
+                };
 
-            ds.audio_sink.write(&audio_out);
-            ds.total_audio_samples += audio_out.len() as u64;
+                if !sink_muted {
+                    ds.audio_sink.write(&audio_out);
+                }
 
-            // WAV recording of demodulated audio
-            if let Some(ref mut writer) = ds.wav_writer {
-                for &sample in &audio_out {
-                    let s16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                    writer.write_sample(s16).ok();
+                ds.total_audio_samples += audio_out.len() as u64;
+
+                if let Some(ref mut writer) = ds.wav_writer {
+                    for &sample in &audio_out {
+                        let s16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                        writer.write_sample(s16).ok();
+                    }
                 }
             }
 
-            // Emit demod visualization data
-            let stride = (agc_out.len() / 256).max(1);
-            let constellation: Vec<(f32, f32)> = agc_out
-                .iter()
-                .step_by(stride)
-                .take(256)
-                .map(|s| (s.re, s.im))
-                .collect();
-            let vis = DemodVisData {
-                constellation,
-                pll_phase_error: ds.demod.phase_error(),
-                pll_frequency_hz: ds.demod.frequency_estimate_hz(),
-                pll_locked: ds.demod.is_locked(),
-                agc_gain_db: ds.agc.gain_db() as f32,
-                mode: ds.demod.name().to_string(),
-            };
-            try_send_event(&evt_tx, Event::DemodVis(vis), &events_dropped);
+            if emit_visualization {
+                let stride = (agc_out.len() / 256).max(1);
+                let constellation: Vec<(f32, f32)> = agc_out
+                    .iter()
+                    .step_by(stride)
+                    .take(256)
+                    .map(|s| (s.re, s.im))
+                    .collect();
+                let vis = DemodVisData {
+                    constellation,
+                    pll_phase_error: ds.demod.phase_error(),
+                    pll_frequency_hz: ds.demod.frequency_estimate_hz(),
+                    pll_locked: ds.demod.is_locked(),
+                    agc_gain_db: ds.agc.gain_db() as f32,
+                    mode: ds.demod.name().to_string(),
+                };
+                try_send_event(&evt_tx, Event::DemodVis(vis), &events_dropped);
+            }
 
             ds.agc.gain_db() as f32
         } else {
@@ -1135,9 +1287,28 @@ fn run_processing_loop(
         last_samples = samples.clone();
 
         // 5-10. Spectrum, CFAR, flatness, SNR, stats — skippable under load
-        let do_spectrum = load_shedder.run_spectrum(block_count);
+        #[cfg(feature = "audio")]
+        let spectrum_update_interval = active_demod_config
+            .as_ref()
+            .map(|cfg| u64::from(cfg.spectrum_update_interval_blocks.max(1)))
+            .unwrap_or(1);
+        #[cfg(not(feature = "audio"))]
+        let spectrum_update_interval = 1u64;
 
-        let (spectrum_db, noise_floor_db, detections, flatness, snr, stats, fft_us, cfar_elapsed_us, stats_elapsed_us) = if do_spectrum {
+        let do_spectrum = load_shedder.run_spectrum(block_count)
+            && (block_count == 1 || block_count % spectrum_update_interval == 0);
+
+        let (
+            spectrum_db,
+            noise_floor_db,
+            detections,
+            flatness,
+            snr,
+            stats,
+            fft_us,
+            cfar_elapsed_us,
+            stats_elapsed_us,
+        ) = if do_spectrum {
             let fft_start = Instant::now();
             let spectrum_db = if samples.len() >= config.fft_size * 2 {
                 analyzer.compute_averaged_spectrum(&samples, 0.5)
@@ -1161,7 +1332,17 @@ fn run_processing_loop(
             // Cache spectrum
             last_spectrum_db = spectrum_db.clone();
 
-            (spectrum_db, noise_floor_db, detections, flatness, snr, stats, fft_elapsed, cfar_elapsed, stats_elapsed)
+            (
+                spectrum_db,
+                noise_floor_db,
+                detections,
+                flatness,
+                snr,
+                stats,
+                fft_elapsed,
+                cfar_elapsed,
+                stats_elapsed,
+            )
         } else {
             // Reuse cached spectrum — skip expensive DSP
             let snr = snr_m2m4(&samples);
@@ -1207,20 +1388,19 @@ fn run_processing_loop(
                     if h.is_alive() {
                         true
                     } else {
-                        evt_tx
-                            .send(Event::Error(format!(
+                        try_send_event(
+                            &evt_tx,
+                            Event::Error(format!(
                                 "Decoder '{}' died unexpectedly — removed",
                                 h.name()
-                            )))
-                            .ok();
+                            )),
+                            &events_dropped,
+                        );
                         false
                     }
                 });
                 if active_decoders.len() < before {
-                    tracing::warn!(
-                        "Removed {} dead decoder(s)",
-                        before - active_decoders.len()
-                    );
+                    tracing::warn!("Removed {} dead decoder(s)", before - active_decoders.len());
                 }
             }
             for handle in &active_decoders {
@@ -1265,8 +1445,7 @@ fn run_processing_loop(
 
         // Compute health status
         let current_events_dropped = events_dropped.load(Ordering::Relaxed);
-        let health = if buffer_len as f32 / buffer_capacity as f32 > 0.75
-            || load_shedder.level == 2
+        let health = if buffer_len as f32 / buffer_capacity as f32 > 0.75 || load_shedder.level == 2
         {
             HealthStatus::Critical
         } else if buffer_len as f32 / buffer_capacity as f32 > 0.40
@@ -1278,12 +1457,14 @@ fn run_processing_loop(
             HealthStatus::Normal
         };
 
-        // Emit health change event on transitions (rare, use blocking send)
+        // Emit health change event on transitions
         if health != prev_health {
             prev_health = health;
-            evt_tx
-                .send(Event::Status(StatusUpdate::HealthChanged(health)))
-                .ok();
+            try_send_event(
+                &evt_tx,
+                Event::Status(StatusUpdate::HealthChanged(health)),
+                &events_dropped,
+            );
         }
 
         // Periodic checkpoint (every 1000 blocks ≈ 8 seconds at 2 MS/s)
@@ -1297,8 +1478,13 @@ fn run_processing_loop(
                 config: config.clone(),
                 frequency: config.frequency,
                 gain: config.gain,
-                active_decoders: active_decoders.iter().map(|h| h.name().to_string()).collect(),
-                recording_path: recording.as_ref().map(|r| r.path().to_string_lossy().to_string()),
+                active_decoders: active_decoders
+                    .iter()
+                    .map(|h| h.name().to_string())
+                    .collect(),
+                recording_path: recording
+                    .as_ref()
+                    .map(|r| r.path().to_string_lossy().to_string()),
                 tracking_active: tracker.is_some(),
                 timeline_entries: timeline.entry_count(),
                 blocks_processed: block_count,
@@ -1356,9 +1542,11 @@ fn run_processing_loop(
         if was_raw {
             write_sigmf_sidecar(&rec_path, config.frequency, config.sample_rate);
         }
-        evt_tx
-            .send(Event::Status(StatusUpdate::RecordingStopped(total)))
-            .ok();
+        try_send_event(
+            &evt_tx,
+            Event::Status(StatusUpdate::RecordingStopped(total)),
+            &events_dropped,
+        );
     }
 
     // Finalize demod if still active
@@ -1401,7 +1589,9 @@ mod tests {
     fn decoder_registry_in_session() {
         struct TestDecoder;
         impl DecoderPlugin for TestDecoder {
-            fn name(&self) -> &str { "test" }
+            fn name(&self) -> &str {
+                "test"
+            }
             fn requirements(&self) -> DecoderRequirements {
                 DecoderRequirements {
                     center_frequency: 100e6,
@@ -1426,7 +1616,16 @@ mod tests {
     #[test]
     fn demod_mode_defaults_coverage() {
         // Verify all recognized modes return defaults
-        for mode in &["am", "am-sync", "fm", "wfm", "wfm-stereo", "usb", "lsb", "cw"] {
+        for mode in &[
+            "am",
+            "am-sync",
+            "fm",
+            "wfm",
+            "wfm-stereo",
+            "usb",
+            "lsb",
+            "cw",
+        ] {
             let defaults = mode_defaults(mode);
             assert!(defaults.is_some(), "mode '{}' should have defaults", mode);
             let d = defaults.unwrap();
@@ -1440,6 +1639,10 @@ mod tests {
     #[test]
     fn rec_writer_types() {
         // Verify RecordFormat→RecWriter mapping compiles
-        let _formats = [RecordFormat::RawCf32, RecordFormat::Wav, RecordFormat::SigMf];
+        let _formats = [
+            RecordFormat::RawCf32,
+            RecordFormat::Wav,
+            RecordFormat::SigMf,
+        ];
     }
 }

@@ -1,11 +1,11 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::analysis::report::{ScanDetection, ScanReport, export_scan_report};
+use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::detection::{
     CfarConfig, CfarMethod, cfar_detect, db_to_linear, noise_floor_sigma_clip,
 };
@@ -68,8 +68,7 @@ pub struct ScanArgs {
 
 pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
     let step = args.step.unwrap_or(args.sample_rate / 2.0);
-    let gain_mode = wavecore::util::parse_gain(&args.gain)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Parse CFAR method
     let cfar_method = match args.cfar.to_lowercase().as_str() {
@@ -101,8 +100,8 @@ pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
     };
 
     let registry = DecoderRegistry::new();
-    let (session, events) = SessionManager::new(config, registry)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (session, events) =
+        SessionManager::new(config, registry).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let num_steps = ((args.end - args.start) / step).ceil() as usize + 1;
 
@@ -151,7 +150,9 @@ pub async fn run(args: ScanArgs, device_index: u32) -> Result<()> {
 
         eprint!(
             "\r  [{}/{}] {:.3} MHz ...",
-            current_step, num_steps, freq / 1e6,
+            current_step,
+            num_steps,
+            freq / 1e6,
         );
         use std::io::Write;
         std::io::stderr().flush().ok();

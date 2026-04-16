@@ -147,7 +147,8 @@ impl SignalTracker {
         self.power_history.push(power, elapsed_secs);
         self.noise_floor_history.push(noise_floor, elapsed_secs);
         self.freq_offset_history.push(freq_offset, elapsed_secs);
-        self.spectral_flatness_history.push(spectral_flatness, elapsed_secs);
+        self.spectral_flatness_history
+            .push(spectral_flatness, elapsed_secs);
         self.sample_count += 1;
     }
 
@@ -164,9 +165,13 @@ impl SignalTracker {
         // Stability score: based on variance of SNR (low variance = stable)
         let snr_variance = if self.snr_history.len() > 1 {
             let mean = self.snr_history.mean();
-            let var: f64 = self.snr_history.to_vec().iter()
+            let var: f64 = self
+                .snr_history
+                .to_vec()
+                .iter()
                 .map(|(_, v)| (*v as f64 - mean as f64).powi(2))
-                .sum::<f64>() / self.snr_history.len() as f64;
+                .sum::<f64>()
+                / self.snr_history.len() as f64;
             var.sqrt() as f32
         } else {
             0.0
@@ -304,7 +309,11 @@ mod tests {
             stable.push(20.0, -30.0, -50.0, 0.0, 0.5, i as f64);
         }
         let snap = stable.snapshot();
-        assert!(snap.summary.stability_score > 0.9, "Stable signal score should be high, got {}", snap.summary.stability_score);
+        assert!(
+            snap.summary.stability_score > 0.9,
+            "Stable signal score should be high, got {}",
+            snap.summary.stability_score
+        );
 
         // Unstable signal: wildly varying SNR → score near 0.0
         let mut unstable = SignalTracker::new(100);
@@ -313,7 +322,11 @@ mod tests {
             unstable.push(snr, -30.0, -50.0, 0.0, 0.5, i as f64);
         }
         let snap = unstable.snapshot();
-        assert!(snap.summary.stability_score < 0.1, "Unstable signal score should be low, got {}", snap.summary.stability_score);
+        assert!(
+            snap.summary.stability_score < 0.1,
+            "Unstable signal score should be low, got {}",
+            snap.summary.stability_score
+        );
     }
 
     #[test]

@@ -90,12 +90,11 @@ pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
     };
     let mode_str = mode_string.as_str();
 
-    let defaults = mode_defaults(mode_str)
-        .ok_or_else(|| anyhow::anyhow!("Unknown demod mode: {mode_str}"))?;
+    let defaults =
+        mode_defaults(mode_str).ok_or_else(|| anyhow::anyhow!("Unknown demod mode: {mode_str}"))?;
 
     let sample_rate = defaults.sample_rate;
-    let gain_mode =
-        wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let volume = (args.volume.min(100) as f32) / 100.0;
 
@@ -123,6 +122,8 @@ pub async fn run(args: ListenArgs, device_index: u32) -> Result<()> {
         squelch: args.squelch,
         deemph_us: None,
         output_wav: None,
+        emit_visualization: false,
+        spectrum_update_interval_blocks: 8,
     };
 
     session

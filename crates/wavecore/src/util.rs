@@ -51,9 +51,7 @@ pub fn parse_gain(s: &str) -> Result<GainMode, String> {
     if s.eq_ignore_ascii_case("auto") {
         Ok(GainMode::Auto)
     } else {
-        let db: f64 = s
-            .parse()
-            .map_err(|e| format!("invalid gain '{s}': {e}"))?;
+        let db: f64 = s.parse().map_err(|e| format!("invalid gain '{s}': {e}"))?;
         Ok(GainMode::Manual(db))
     }
 }

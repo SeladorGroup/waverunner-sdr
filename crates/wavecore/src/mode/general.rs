@@ -151,7 +151,11 @@ impl GeneralMode {
         detections
             .iter()
             .filter(|d| d.snr_db >= min_snr)
-            .max_by(|a, b| a.snr_db.partial_cmp(&b.snr_db).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.snr_db
+                    .partial_cmp(&b.snr_db)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     }
 
     /// Compute the next scanning frequency with wrap-around.
@@ -179,10 +183,7 @@ impl Mode for GeneralMode {
                 format!("Settling {:.3} MHz", freq / 1e6)
             }
             ScanState::Parked { freq, decoder, .. } => {
-                let label = self
-                    .classification_label
-                    .as_deref()
-                    .unwrap_or("signal");
+                let label = self.classification_label.as_deref().unwrap_or("signal");
                 match decoder {
                     Some(d) => format!("Parked {:.3} MHz ({}, {})", freq / 1e6, label, d),
                     None => format!("Parked {:.3} MHz ({})", freq / 1e6, label),
@@ -205,11 +206,7 @@ impl Mode for GeneralMode {
 
                             let mut cmds = vec![Command::Tune(signal_freq)];
                             let decoder = match &classification {
-                                SignalClass::KnownProtocol {
-                                    name,
-                                    decoder,
-                                    ..
-                                } => {
+                                SignalClass::KnownProtocol { name, decoder, .. } => {
                                     self.classification_label = Some(name.clone());
                                     if self.config.auto_decode {
                                         cmds.push(Command::EnableDecoder(decoder.clone()));
@@ -237,6 +234,8 @@ impl Mode for GeneralMode {
                                     squelch: None,
                                     deemph_us: None,
                                     output_wav: None,
+                                    emit_visualization: false,
+                                    spectrum_update_interval_blocks: 8,
                                 }));
                                 true
                             } else {
@@ -278,7 +277,12 @@ impl Mode for GeneralMode {
                         if *no_signal_blocks >= 10 {
                             let parked_freq = *freq;
                             // Take ownership of decoder/demod state before reassigning
-                            let (old_decoder, was_demod) = if let ScanState::Parked { ref mut decoder, demod_active, .. } = self.state {
+                            let (old_decoder, was_demod) = if let ScanState::Parked {
+                                ref mut decoder,
+                                demod_active,
+                                ..
+                            } = self.state
+                            {
                                 (decoder.take(), demod_active)
                             } else {
                                 (None, false)
@@ -327,10 +331,7 @@ impl Mode for GeneralMode {
                     Vec::new()
                 }
             }
-            ScanState::Settling {
-                freq,
-                settle_start,
-            } => {
+            ScanState::Settling { freq, settle_start } => {
                 if settle_start.elapsed().as_millis() >= 10 {
                     let f = *freq;
                     self.state = ScanState::Scanning {
@@ -483,9 +484,7 @@ mod tests {
         let det = make_detection(0.0, 20.0);
         let cmds = mode.handle_event(&Event::Detections(vec![det]));
 
-        let has_enable = cmds
-            .iter()
-            .any(|c| matches!(c, Command::EnableDecoder(_)));
+        let has_enable = cmds.iter().any(|c| matches!(c, Command::EnableDecoder(_)));
         assert!(has_enable, "Expected EnableDecoder for ADS-B signal");
     }
 
@@ -571,7 +570,10 @@ mod tests {
         let cmds = mode.handle_event(&Event::Detections(vec![det]));
 
         let has_start_demod = cmds.iter().any(|c| matches!(c, Command::StartDemod(_)));
-        assert!(has_start_demod, "Expected StartDemod when enable_audio is true");
+        assert!(
+            has_start_demod,
+            "Expected StartDemod when enable_audio is true"
+        );
     }
 
     #[test]
@@ -584,7 +586,10 @@ mod tests {
         let cmds = mode.handle_event(&Event::Detections(vec![det]));
 
         let has_start_demod = cmds.iter().any(|c| matches!(c, Command::StartDemod(_)));
-        assert!(!has_start_demod, "Should not emit StartDemod when enable_audio is false");
+        assert!(
+            !has_start_demod,
+            "Should not emit StartDemod when enable_audio is false"
+        );
     }
 
     #[test]
@@ -610,7 +615,10 @@ mod tests {
         }
 
         let has_stop_demod = final_cmds.iter().any(|c| matches!(c, Command::StopDemod));
-        assert!(has_stop_demod, "Expected StopDemod when leaving park with audio active");
+        assert!(
+            has_stop_demod,
+            "Expected StopDemod when leaving park with audio active"
+        );
     }
 
     #[test]
@@ -634,7 +642,13 @@ mod tests {
         let cmds = mode.tick();
 
         let has_stop_demod = cmds.iter().any(|c| matches!(c, Command::StopDemod));
-        assert!(has_stop_demod, "Expected StopDemod on park timeout with audio active");
-        assert!(cmds.iter().any(|c| matches!(c, Command::Tune(_))), "Expected Tune after timeout");
+        assert!(
+            has_stop_demod,
+            "Expected StopDemod on park timeout with audio active"
+        );
+        assert!(
+            cmds.iter().any(|c| matches!(c, Command::Tune(_))),
+            "Expected Tune after timeout"
+        );
     }
 }

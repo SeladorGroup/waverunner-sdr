@@ -17,8 +17,8 @@
 //! 48 kHz), the `AudioSink` automatically inserts a polyphase resampler.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Lock-free SPSC ring buffer for audio samples.
 ///
@@ -30,8 +30,8 @@ use std::sync::Arc;
 /// arithmetic (bitwise AND instead of modulo).
 struct RingBuffer {
     data: Vec<f32>,
-    capacity: usize,       // Always power of 2
-    mask: usize,           // capacity - 1
+    capacity: usize, // Always power of 2
+    mask: usize,     // capacity - 1
     write_pos: AtomicUsize,
     read_pos: AtomicUsize,
 }
@@ -95,6 +95,76 @@ impl RingBuffer {
 
         to_read
     }
+
+    /// Read mono samples and duplicate them across all output channels.
+    ///
+    /// Returns the number of mono frames actually read.
+    fn read_mono_to_interleaved(&self, output: &mut [f32], channels: usize, gain: f32) -> usize {
+        debug_assert!(channels > 0);
+
+        let available = self.available_read();
+        let frames = (output.len() / channels).min(available);
+        let r = self.read_pos.load(Ordering::Relaxed);
+
+        for frame in 0..frames {
+            let idx = (r + frame) & self.mask;
+            let sample = self.data[idx] * gain;
+            let base = frame * channels;
+            for ch in 0..channels {
+                output[base + ch] = sample;
+            }
+        }
+
+        output[frames * channels..].fill(0.0);
+        self.read_pos.store(r + frames, Ordering::Release);
+        frames
+    }
+
+    /// Read stereo interleaved samples and mix them down to mono.
+    ///
+    /// Returns the number of mono frames actually read.
+    fn read_stereo_to_mono(&self, output: &mut [f32], gain: f32) -> usize {
+        let available = self.available_read();
+        let frames = output.len().min(available / 2);
+        let r = self.read_pos.load(Ordering::Relaxed);
+
+        for (frame, out) in output.iter_mut().enumerate().take(frames) {
+            let left = self.data[(r + frame * 2) & self.mask];
+            let right = self.data[(r + frame * 2 + 1) & self.mask];
+            *out = ((left + right) * 0.5) * gain;
+        }
+
+        output[frames..].fill(0.0);
+        self.read_pos.store(r + frames * 2, Ordering::Release);
+        frames
+    }
+
+    /// Read stereo interleaved samples and write them to a multi-channel output.
+    ///
+    /// The first two device channels receive left/right audio. Additional device
+    /// channels are filled with silence. Returns the number of stereo frames read.
+    fn read_stereo_to_interleaved(&self, output: &mut [f32], channels: usize, gain: f32) -> usize {
+        debug_assert!(channels >= 2);
+
+        let available = self.available_read();
+        let frames = (output.len() / channels).min(available / 2);
+        let r = self.read_pos.load(Ordering::Relaxed);
+
+        for frame in 0..frames {
+            let left = self.data[(r + frame * 2) & self.mask] * gain;
+            let right = self.data[(r + frame * 2 + 1) & self.mask] * gain;
+            let base = frame * channels;
+            output[base] = left;
+            output[base + 1] = right;
+            for ch in 2..channels {
+                output[base + ch] = 0.0;
+            }
+        }
+
+        output[frames * channels..].fill(0.0);
+        self.read_pos.store(r + frames * 2, Ordering::Release);
+        frames
+    }
 }
 
 // Safety: RingBuffer uses atomics for synchronization, single-producer/single-consumer
@@ -112,15 +182,23 @@ pub struct AudioSink {
     volume: Arc<AtomicUsize>, // Volume as u32 bits (f32 reinterpreted)
     running: Arc<AtomicBool>,
     sample_rate: u32,
+    source_channels: usize,
 }
 
 impl AudioSink {
     /// Open the default audio output device.
     ///
     /// `sample_rate`: desired sample rate (Hz). Falls back to device default if unsupported.
+    /// `source_channels`: number of channels written into the sink (1=mono, 2=stereo).
     ///
     /// Returns `Err` if no audio device is available.
-    pub fn new(sample_rate: u32) -> Result<Self, String> {
+    pub fn new(sample_rate: u32, source_channels: usize) -> Result<Self, String> {
+        if source_channels == 0 || source_channels > 2 {
+            return Err(format!(
+                "Unsupported audio source channel count: {source_channels}"
+            ));
+        }
+
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -133,22 +211,16 @@ impl AudioSink {
         // Find a config matching our sample rate, prefer f32 format
         let config = supported_configs
             .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
-            .find(|c| {
-                c.min_sample_rate().0 <= sample_rate && c.max_sample_rate().0 >= sample_rate
-            })
+            .find(|c| c.min_sample_rate().0 <= sample_rate && c.max_sample_rate().0 >= sample_rate)
             .map(|c| c.with_sample_rate(cpal::SampleRate(sample_rate)))
-            .or_else(|| {
-                device
-                    .default_output_config()
-                    .ok()
-            })
+            .or_else(|| device.default_output_config().ok())
             .ok_or_else(|| "No suitable audio config found".to_string())?;
 
         let actual_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
 
-        // Ring buffer: ~200ms of audio at the device rate
-        let ring_size = (actual_rate as usize) * channels / 5;
+        // Ring buffer stores source samples, not device frames.
+        let ring_size = (actual_rate as usize) * source_channels / 5;
         let ring = Arc::new(RingBuffer::new(ring_size.max(4096)));
 
         let volume = Arc::new(AtomicUsize::new(f32::to_bits(1.0) as usize));
@@ -169,25 +241,26 @@ impl AudioSink {
 
                     let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed) as u32);
 
-                    // For mono source into stereo output: duplicate samples
-                    if channels >= 2 {
-                        // Read mono samples and duplicate to all channels
-                        let frames = data.len() / channels;
-                        let mut mono_buf = vec![0.0f32; frames];
-                        let read = ring_cb.read(&mut mono_buf);
-
-                        for i in 0..frames {
-                            let sample = if i < read { mono_buf[i] * vol } else { 0.0 };
-                            for ch in 0..channels {
-                                data[i * channels + ch] = sample;
+                    match (source_channels, channels) {
+                        (1, 1) => {
+                            let read = ring_cb.read(data);
+                            for s in &mut data[..read] {
+                                *s *= vol;
                             }
+                            data[read..].fill(0.0);
                         }
-                    } else {
-                        let read = ring_cb.read(data);
-                        for s in &mut data[..read] {
-                            *s *= vol;
+                        (1, _) => {
+                            ring_cb.read_mono_to_interleaved(data, channels, vol);
                         }
-                        data[read..].fill(0.0);
+                        (2, 1) => {
+                            ring_cb.read_stereo_to_mono(data, vol);
+                        }
+                        (2, _) => {
+                            ring_cb.read_stereo_to_interleaved(data, channels, vol);
+                        }
+                        _ => {
+                            data.fill(0.0);
+                        }
                     }
                 },
                 move |err| {
@@ -207,6 +280,7 @@ impl AudioSink {
             volume,
             running,
             sample_rate: actual_rate,
+            source_channels,
         })
     }
 
@@ -243,6 +317,11 @@ impl AudioSink {
     /// The actual audio device sample rate.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Number of channels expected on `write()`.
+    pub fn source_channels(&self) -> usize {
+        self.source_channels
     }
 
     /// Available space in the ring buffer (in samples).
@@ -328,5 +407,38 @@ mod tests {
         let mut out = [0.0; 4];
         let read = ring.read(&mut out);
         assert_eq!(read, 0);
+    }
+
+    #[test]
+    fn ring_buffer_mono_to_stereo_duplicates() {
+        let ring = RingBuffer::new(8);
+        ring.write(&[0.25, -0.5]);
+
+        let mut out = [0.0f32; 4];
+        let read = ring.read_mono_to_interleaved(&mut out, 2, 2.0);
+        assert_eq!(read, 2);
+        assert_eq!(out, [0.5, 0.5, -1.0, -1.0]);
+    }
+
+    #[test]
+    fn ring_buffer_stereo_to_mono_downmixes() {
+        let ring = RingBuffer::new(8);
+        ring.write(&[1.0, -1.0, 0.5, 0.5]);
+
+        let mut out = [0.0f32; 2];
+        let read = ring.read_stereo_to_mono(&mut out, 1.0);
+        assert_eq!(read, 2);
+        assert_eq!(out, [0.0, 0.5]);
+    }
+
+    #[test]
+    fn ring_buffer_stereo_to_interleaved_preserves_channels() {
+        let ring = RingBuffer::new(8);
+        ring.write(&[0.1, 0.2, 0.3, 0.4]);
+
+        let mut out = [0.0f32; 6];
+        let read = ring.read_stereo_to_interleaved(&mut out, 3, 1.0);
+        assert_eq!(read, 2);
+        assert_eq!(out, [0.1, 0.2, 0.0, 0.3, 0.4, 0.0]);
     }
 }

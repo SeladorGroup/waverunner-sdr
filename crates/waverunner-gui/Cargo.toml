@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Tauri GUI for Waverunner SDR platform"
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
 
 [build-dependencies]
 tauri-build = { workspace = true }

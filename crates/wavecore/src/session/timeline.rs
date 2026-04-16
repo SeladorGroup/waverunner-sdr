@@ -74,12 +74,7 @@ impl SessionTimeline {
     }
 
     /// Add a user annotation. Returns the annotation id.
-    pub fn add_annotation(
-        &mut self,
-        kind: AnnotationKind,
-        text: String,
-        frequency_hz: f64,
-    ) -> u64 {
+    pub fn add_annotation(&mut self, kind: AnnotationKind, text: String, frequency_hz: f64) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let timestamp_s = self.elapsed_s();
@@ -90,7 +85,8 @@ impl SessionTimeline {
             text,
             frequency_hz,
         });
-        self.entries.push(TimelineEntry::Annotation { timestamp_s, id });
+        self.entries
+            .push(TimelineEntry::Annotation { timestamp_s, id });
         id
     }
 
@@ -126,8 +122,8 @@ impl SessionTimeline {
             "timeline": self.entries,
             "annotations": self.annotations,
         });
-        let json = serde_json::to_string_pretty(&doc)
-            .map_err(|e| format!("Serialize error: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(&doc).map_err(|e| format!("Serialize error: {e}"))?;
         std::fs::write(path, &json).map_err(|e| format!("Write error: {e}"))?;
         Ok(path.display().to_string())
     }
@@ -142,23 +138,24 @@ impl SessionTimeline {
         let mut file =
             std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-        writeln!(file, "timestamp_s,event_type,detail")
-            .map_err(|e| format!("Write error: {e}"))?;
+        writeln!(file, "timestamp_s,event_type,detail").map_err(|e| format!("Write error: {e}"))?;
 
         for entry in &self.entries {
             let (ts, etype, detail) = match entry {
-                TimelineEntry::FreqChange { timestamp_s, freq_hz } => {
-                    (*timestamp_s, "freq_change", format!("{freq_hz:.0}"))
-                }
+                TimelineEntry::FreqChange {
+                    timestamp_s,
+                    freq_hz,
+                } => (*timestamp_s, "freq_change", format!("{freq_hz:.0}")),
                 TimelineEntry::GainChange { timestamp_s, gain } => {
                     (*timestamp_s, "gain_change", gain.clone())
                 }
                 TimelineEntry::RecordStart { timestamp_s, path } => {
                     (*timestamp_s, "record_start", path.clone())
                 }
-                TimelineEntry::RecordStop { timestamp_s, samples } => {
-                    (*timestamp_s, "record_stop", format!("{samples}"))
-                }
+                TimelineEntry::RecordStop {
+                    timestamp_s,
+                    samples,
+                } => (*timestamp_s, "record_stop", format!("{samples}")),
                 TimelineEntry::DecoderEnabled { timestamp_s, name } => {
                     (*timestamp_s, "decoder_on", name.clone())
                 }
@@ -234,11 +231,7 @@ mod tests {
             "First bookmark".to_string(),
             100e6,
         );
-        let id2 = tl.add_annotation(
-            AnnotationKind::Note,
-            "A note".to_string(),
-            200e6,
-        );
+        let id2 = tl.add_annotation(AnnotationKind::Note, "A note".to_string(), 200e6);
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
         assert_eq!(tl.annotations().len(), 2);
@@ -249,11 +242,7 @@ mod tests {
     #[test]
     fn annotation_fields() {
         let mut tl = SessionTimeline::new();
-        let id = tl.add_annotation(
-            AnnotationKind::Tag,
-            "Tagged signal".to_string(),
-            433.92e6,
-        );
+        let id = tl.add_annotation(AnnotationKind::Tag, "Tagged signal".to_string(), 433.92e6);
         let ann = &tl.annotations()[0];
         assert_eq!(ann.id, id);
         assert_eq!(ann.text, "Tagged signal");
@@ -268,11 +257,7 @@ mod tests {
             timestamp_s: 0.0,
             freq_hz: 100e6,
         });
-        tl.add_annotation(
-            AnnotationKind::Bookmark,
-            "Test".to_string(),
-            100e6,
-        );
+        tl.add_annotation(AnnotationKind::Bookmark, "Test".to_string(), 100e6);
 
         let path = temp_path("test_timeline.json");
         let result = tl.export_json(&path);
@@ -324,11 +309,7 @@ mod tests {
             timestamp_s: 0.0,
             freq_hz: 100e6,
         });
-        tl.add_annotation(
-            AnnotationKind::Bookmark,
-            "BM1".to_string(),
-            100e6,
-        );
+        tl.add_annotation(AnnotationKind::Bookmark, "BM1".to_string(), 100e6);
         tl.log_event(TimelineEntry::DecoderEnabled {
             timestamp_s: 1.0,
             name: "pocsag".to_string(),
@@ -337,11 +318,7 @@ mod tests {
             timestamp_s: 2.0,
             level: 1,
         });
-        tl.add_annotation(
-            AnnotationKind::Note,
-            "Note1".to_string(),
-            200e6,
-        );
+        tl.add_annotation(AnnotationKind::Note, "Note1".to_string(), 200e6);
 
         assert_eq!(tl.len(), 5);
         assert_eq!(tl.annotations().len(), 2);

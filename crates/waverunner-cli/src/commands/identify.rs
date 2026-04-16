@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -9,9 +9,7 @@ use wavecore::dsp::decoders;
 use wavecore::frequency_db::FrequencyDb;
 use wavecore::session::manager::SessionManager;
 use wavecore::session::{Command, Event, SessionConfig};
-use wavecore::signal_identify::{
-    self, DecoderTrialResult, IdentifyResult,
-};
+use wavecore::signal_identify::{self, DecoderTrialResult, IdentifyResult};
 
 use super::parse_frequency;
 
@@ -55,18 +53,25 @@ pub async fn run(args: IdentifyArgs, device_index: u32) -> Result<()> {
                 println!("\nRunning decoder trial ({} seconds)...", args.trial_secs);
             }
 
-            let trials = run_decoder_trial(
+            match run_decoder_trial(
                 args.frequency,
                 &args.gain,
                 device_index,
                 &candidates,
                 args.trial_secs,
-            )?;
+            ) {
+                Ok(trials) => {
+                    signal_identify::add_trial_results(&mut result, trials);
 
-            signal_identify::add_trial_results(&mut result, trials);
-
-            if !args.json {
-                print_trial_results(&result);
+                    if !args.json {
+                        print_trial_results(&result);
+                    }
+                }
+                Err(e) => {
+                    if !args.json {
+                        eprintln!("  Decoder trial skipped (no hardware): {e}");
+                    }
+                }
             }
         } else if !args.json {
             println!("\nNo decoder candidates for trial.");
@@ -83,10 +88,7 @@ pub async fn run(args: IdentifyArgs, device_index: u32) -> Result<()> {
             println!("Use: waverunner listen {} --mode {mode}", args.frequency);
         }
         if let Some(ref decoder) = result.recommended_decoder {
-            println!(
-                "Use: waverunner decode {decoder} -f {}",
-                args.frequency,
-            );
+            println!("Use: waverunner decode {decoder} -f {}", args.frequency,);
         }
     }
 
@@ -168,8 +170,7 @@ fn run_decoder_trial(
     candidates: &[String],
     trial_secs: u64,
 ) -> Result<Vec<DecoderTrialResult>> {
-    let gain_mode =
-        wavecore::util::parse_gain(gain).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
@@ -205,10 +206,8 @@ fn run_decoder_trial(
     });
 
     // Count decoded messages per decoder
-    let mut counts: std::collections::HashMap<String, usize> = candidates
-        .iter()
-        .map(|d| (d.clone(), 0))
-        .collect();
+    let mut counts: std::collections::HashMap<String, usize> =
+        candidates.iter().map(|d| (d.clone(), 0)).collect();
 
     let start = Instant::now();
     let deadline = Duration::from_secs(trial_secs);

@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Core DSP engine and hardware abstraction for Waverunner SDR platform"
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
 
 [dependencies]
 num-complex = { workspace = true }

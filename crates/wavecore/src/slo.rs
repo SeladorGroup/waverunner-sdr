@@ -226,7 +226,10 @@ mod tests {
         let slo = Slo::load();
         let stats = make_stats(1000, 0, 0, 100, 50, 20, 2.1);
         let violations = slo.check_stats(&stats);
-        assert!(violations.is_empty(), "Unexpected violations: {violations:?}");
+        assert!(
+            violations.is_empty(),
+            "Unexpected violations: {violations:?}"
+        );
     }
 
     #[test]
@@ -279,7 +282,9 @@ mod tests {
         let stats = make_stats(100, 0, 0, 100, 50, 20, 0.5);
         let violations = slo.check_stats(&stats);
         assert!(
-            violations.iter().any(|v| v.name == "sustained_throughput_msps"),
+            violations
+                .iter()
+                .any(|v| v.name == "sustained_throughput_msps"),
             "Should flag low throughput"
         );
     }

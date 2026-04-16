@@ -22,7 +22,7 @@ pub enum BookmarkAction {
         #[arg(short, long)]
         mode: Option<String>,
         /// Decoder name
-        #[arg(short, long)]
+        #[arg(short = 'D', long)]
         decoder: Option<String>,
         /// Notes
         #[arg(short, long)]
@@ -76,7 +76,10 @@ pub fn run(args: BookmarkArgs) -> Result<()> {
                     let mode = bm.mode.as_deref().unwrap_or("-");
                     let decoder = bm.decoder.as_deref().unwrap_or("-");
                     let notes = bm.notes.as_deref().unwrap_or("");
-                    println!("{:<20} {:>16}  {:<8} {:<10} {}", bm.name, freq, mode, decoder, notes);
+                    println!(
+                        "{:<20} {:>16}  {:<8} {:<10} {}",
+                        bm.name, freq, mode, decoder, notes
+                    );
                 }
                 println!("\n{} bookmarks", bookmarks.len());
             }

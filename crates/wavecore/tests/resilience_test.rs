@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use wavecore::analysis::export::{ExportConfig, ExportContent, ExportFormat};
-use wavecore::analysis::report::{export_session_report, SessionMetadata, SessionReport};
+use wavecore::analysis::report::{SessionMetadata, SessionReport, export_session_report};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::decoders;
 use wavecore::hardware::GainMode;
@@ -228,7 +228,10 @@ fn record_to_readonly_path() {
 
     session.shutdown();
     std::fs::remove_file(&cf32_path).ok();
-    assert!(got_error, "Should have received Error event for bad recording path");
+    assert!(
+        got_error,
+        "Should have received Error event for bad recording path"
+    );
 }
 
 // --- Malformed config/profile ---

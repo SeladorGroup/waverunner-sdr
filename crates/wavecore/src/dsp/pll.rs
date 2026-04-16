@@ -35,7 +35,7 @@
 //!
 //! Provides initial frequency acquisition with wider capture range than PLL.
 //! Uses a frequency discriminator based on the cross-product of successive
-//! samples: error ∝ Im(z[n] · z*[n−1]) / (|z[n]| + |z[n−1]|).
+//! samples: error ∝ `Im(z[n] · z*[n−1]) / (|z[n]| + |z[n−1]|)`.
 //!
 //! Typically used to pull the signal within PLL lock range, then switched off.
 
@@ -97,8 +97,7 @@ impl Pll {
         // BL = ωₙ·(ξ + 1/(4ξ)) / 2  ⇒  ωₙ = 2·BL / (ξ + 1/(4ξ))
         // Simplifying: ξ + 1/(4ξ) = (4ξ² + 1)/(4ξ)
         // So: ωₙ = 8·ξ·BL / (4ξ² + 1), where BL is in rad/s
-        let wn = loop_bandwidth_hz * 2.0 * PI * 8.0 * damping
-            / (4.0 * damping * damping + 1.0);
+        let wn = loop_bandwidth_hz * 2.0 * PI * 8.0 * damping / (4.0 * damping * damping + 1.0);
 
         let ws = 2.0 * PI * sample_rate;
         let wn_norm = wn / ws;
@@ -253,17 +252,11 @@ impl CostasLoop {
     /// Create a Costas loop.
     ///
     /// Parameters same as PLL; `mode` selects the phase detector algorithm.
-    pub fn new(
-        loop_bandwidth_hz: f64,
-        damping: f64,
-        sample_rate: f64,
-        mode: CostasMode,
-    ) -> Self {
+    pub fn new(loop_bandwidth_hz: f64, damping: f64, sample_rate: f64, mode: CostasMode) -> Self {
         // BL = ωₙ·(ξ + 1/(4ξ)) / 2  ⇒  ωₙ = 2·BL / (ξ + 1/(4ξ))
         // Simplifying: ξ + 1/(4ξ) = (4ξ² + 1)/(4ξ)
         // So: ωₙ = 8·ξ·BL / (4ξ² + 1), where BL is in rad/s
-        let wn = loop_bandwidth_hz * 2.0 * PI * 8.0 * damping
-            / (4.0 * damping * damping + 1.0);
+        let wn = loop_bandwidth_hz * 2.0 * PI * 8.0 * damping / (4.0 * damping * damping + 1.0);
         let ws = 2.0 * PI * sample_rate;
         let wn_norm = wn / ws;
 
@@ -358,14 +351,14 @@ impl CostasLoop {
 /// Uses a cross-product frequency discriminator that estimates instantaneous
 /// frequency error from consecutive samples:
 ///
-///   e_f[n] = Im(z[n] · z*[n−1]) / (|z[n]| · |z[n−1]|)
+///   `e_f[n] = Im(z[n] · z*[n−1]) / (|z[n]| · |z[n−1]|)`
 ///
 /// This gives an error signal proportional to the frequency offset (for small
 /// offsets). The FLL has a much wider capture range than the PLL but coarser
 /// tracking. Typical usage: FLL acquires the signal, then hands off to PLL.
 ///
 /// The loop filter is first-order (integral only), giving a Type 1 loop:
-///   ω[n] = ω[n−1] + K_f · e_f[n]
+///   `ω[n] = ω[n−1] + K_f · e_f[n]`
 pub struct Fll {
     /// NCO phase (radians)
     phase: f64,
@@ -685,8 +678,13 @@ mod tests {
     fn wrap_phase_test() {
         assert!((wrap_phase(0.0)).abs() < 1e-10);
         assert!((wrap_phase(PI) - PI).abs() < 1e-10 || (wrap_phase(PI) + PI).abs() < 1e-10);
-        assert!((wrap_phase(3.0 * PI) - PI).abs() < 1e-10 || (wrap_phase(3.0 * PI) + PI).abs() < 1e-10);
-        assert!((wrap_phase(-3.0 * PI) + PI).abs() < 1e-10 || (wrap_phase(-3.0 * PI) - PI).abs() < 1e-10);
+        assert!(
+            (wrap_phase(3.0 * PI) - PI).abs() < 1e-10 || (wrap_phase(3.0 * PI) + PI).abs() < 1e-10
+        );
+        assert!(
+            (wrap_phase(-3.0 * PI) + PI).abs() < 1e-10
+                || (wrap_phase(-3.0 * PI) - PI).abs() < 1e-10
+        );
     }
 
     #[test]

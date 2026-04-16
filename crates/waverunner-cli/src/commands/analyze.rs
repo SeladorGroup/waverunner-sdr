@@ -81,9 +81,8 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
     let mut registry = DecoderRegistry::new();
     decoders::register_all(&mut registry);
 
-    let (session, event_rx) =
-        SessionManager::new_with_device(config, device, registry)
-            .map_err(|e| anyhow::anyhow!("Failed to start session: {e}"))?;
+    let (session, event_rx) = SessionManager::new_with_device(config, device, registry)
+        .map_err(|e| anyhow::anyhow!("Failed to start session: {e}"))?;
 
     // Send the analysis command
     let analysis_id = 1u64;
@@ -114,7 +113,13 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
             let fmt = match format.as_str() {
                 "json" => analysis::export::ExportFormat::Json,
                 "png" => analysis::export::ExportFormat::Png,
-                _ => analysis::export::ExportFormat::Csv,
+                "tsv" => analysis::export::ExportFormat::Tsv,
+                "csv" => analysis::export::ExportFormat::Csv,
+                other => {
+                    anyhow::bail!(
+                        "Unknown export format '{other}'. Supported: json, csv, tsv, png"
+                    );
+                }
             };
             analysis::AnalysisRequest::Export(analysis::export::ExportConfig {
                 path: PathBuf::from(output),
@@ -216,9 +221,20 @@ fn print_analysis_result(result: &analysis::AnalysisResult) {
     match result {
         analysis::AnalysisResult::Measurement(r) => {
             println!("\n=== Signal Measurement ===");
-            println!("  -3 dB Bandwidth:   {:.1} Hz ({:.3} kHz)", r.bandwidth_3db_hz, r.bandwidth_3db_hz / 1e3);
-            println!("  -6 dB Bandwidth:   {:.1} Hz ({:.3} kHz)", r.bandwidth_6db_hz, r.bandwidth_6db_hz / 1e3);
-            println!("  Occupied BW:       {:.1} Hz ({:.1}%)", r.occupied_bw_hz, r.obw_percent);
+            println!(
+                "  -3 dB Bandwidth:   {:.1} Hz ({:.3} kHz)",
+                r.bandwidth_3db_hz,
+                r.bandwidth_3db_hz / 1e3
+            );
+            println!(
+                "  -6 dB Bandwidth:   {:.1} Hz ({:.3} kHz)",
+                r.bandwidth_6db_hz,
+                r.bandwidth_6db_hz / 1e3
+            );
+            println!(
+                "  Occupied BW:       {:.1} Hz ({:.1}%)",
+                r.occupied_bw_hz, r.obw_percent
+            );
             println!("  Channel Power:     {:.2} dBFS", r.channel_power_dbfs);
             println!("  ACPR (lower):      {:.2} dBc", r.acpr_lower_dbc);
             println!("  ACPR (upper):      {:.2} dBc", r.acpr_upper_dbc);
@@ -265,7 +281,10 @@ fn print_analysis_result(result: &analysis::AnalysisResult) {
         analysis::AnalysisResult::Comparison(r) => {
             println!("\n=== Spectrum Comparison ===");
             println!("  RMS difference:    {:.2} dB", r.rms_diff_db);
-            println!("  Peak difference:   {:.2} dB (bin {})", r.peak_diff_db, r.peak_diff_bin);
+            println!(
+                "  Peak difference:   {:.2} dB (bin {})",
+                r.peak_diff_db, r.peak_diff_bin
+            );
             println!("  Correlation:       {:.4}", r.correlation);
             println!("  New signals:       {}", r.new_signals.len());
             println!("  Lost signals:      {}", r.lost_signals.len());
@@ -277,10 +296,19 @@ fn print_analysis_result(result: &analysis::AnalysisResult) {
             println!("\n=== Tracking Summary ===");
             println!("  Duration:          {:.1}s", snap.summary.duration_secs);
             println!("  SNR (mean):        {:.1} dB", snap.summary.snr_mean);
-            println!("  SNR (min/max):     {:.1} / {:.1} dB", snap.summary.snr_min, snap.summary.snr_max);
+            println!(
+                "  SNR (min/max):     {:.1} / {:.1} dB",
+                snap.summary.snr_min, snap.summary.snr_max
+            );
             println!("  Power (mean):      {:.1} dBFS", snap.summary.power_mean);
-            println!("  Freq drift:        {:.2} Hz/s", snap.summary.freq_drift_hz_per_sec);
-            println!("  Stability:         {:.0}%", snap.summary.stability_score * 100.0);
+            println!(
+                "  Freq drift:        {:.2} Hz/s",
+                snap.summary.freq_drift_hz_per_sec
+            );
+            println!(
+                "  Stability:         {:.0}%",
+                snap.summary.stability_score * 100.0
+            );
         }
         analysis::AnalysisResult::ExportComplete { path, format } => {
             println!("\nExported to: {} (format: {})", path, format);
@@ -290,7 +318,11 @@ fn print_analysis_result(result: &analysis::AnalysisResult) {
 
 fn print_bitstream_report(r: &analysis::bitstream::BitstreamReport) {
     println!("\n=== Bitstream Analysis ===");
-    println!("  Length:            {} bits ({} bytes)", r.length, r.length / 8);
+    println!(
+        "  Length:            {} bits ({} bytes)",
+        r.length,
+        r.length / 8
+    );
     println!("  1s fraction:       {:.3}", r.ones_fraction);
     println!("  Max run length:    {} bits", r.max_run_length);
     println!("  Entropy/byte:      {:.2} bits", r.entropy_per_byte);
@@ -309,7 +341,10 @@ fn print_bitstream_report(r: &analysis::bitstream::BitstreamReport) {
     if !r.patterns.is_empty() {
         println!("  Patterns:");
         for p in &r.patterns {
-            println!("    {} @ bit {} ({} occurrences)", p.pattern_hex, p.bit_offset, p.occurrences);
+            println!(
+                "    {} @ bit {} ({} occurrences)",
+                p.pattern_hex, p.bit_offset, p.occurrences
+            );
         }
     }
     if !r.hex_dump.is_empty() {

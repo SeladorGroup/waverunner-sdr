@@ -126,10 +126,7 @@ enum ProfileState {
     /// Staying on a single frequency.
     Monitoring { freq: f64 },
     /// Cycling through multiple frequencies.
-    Cycling {
-        index: usize,
-        dwell_start: Instant,
-    },
+    Cycling { index: usize, dwell_start: Instant },
 }
 
 /// Mode implementation that executes a MissionProfile.
@@ -189,6 +186,8 @@ impl ProfileMode {
                 squelch: demod.squelch,
                 deemph_us: None,
                 output_wav: None,
+                emit_visualization: false,
+                spectrum_update_interval_blocks: 8,
             }));
         }
 
@@ -197,8 +196,7 @@ impl ProfileMode {
 
     /// Check if this profile is single-frequency (all entries are monitor=true, or only one entry).
     fn is_single_freq(&self) -> bool {
-        self.profile.frequencies.len() <= 1
-            || self.profile.frequencies.iter().all(|f| f.monitor)
+        self.profile.frequencies.len() <= 1 || self.profile.frequencies.iter().all(|f| f.monitor)
     }
 }
 
@@ -245,13 +243,12 @@ impl Mode for ProfileMode {
                         "sigmf" => ("sigmf", crate::session::RecordFormat::SigMf),
                         _ => ("cf32", crate::session::RecordFormat::RawCf32),
                     };
-                    let path = std::path::PathBuf::from(&auto_rec.output_dir)
-                        .join(format!(
-                            "{}-{}.{}",
-                            self.profile.name,
-                            chrono_timestamp(),
-                            ext,
-                        ));
+                    let path = std::path::PathBuf::from(&auto_rec.output_dir).join(format!(
+                        "{}-{}.{}",
+                        self.profile.name,
+                        chrono_timestamp(),
+                        ext,
+                    ));
                     return vec![Command::StartRecord {
                         path,
                         format: rec_fmt,
@@ -373,11 +370,15 @@ mod tests {
         assert!(!cmds.is_empty());
 
         // Should have Tune command
-        assert!(cmds.iter().any(|c| matches!(c, Command::Tune(f) if *f == 1_090_000_000.0)));
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::Tune(f) if *f == 1_090_000_000.0))
+        );
         // Should have EnableDecoder
-        assert!(cmds
-            .iter()
-            .any(|c| matches!(c, Command::EnableDecoder(d) if d == "adsb")));
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::EnableDecoder(d) if d == "adsb"))
+        );
 
         // Status should show monitoring
         assert!(mode.status().contains("monitoring"));
@@ -420,7 +421,10 @@ mod tests {
             freq_offset_hz: 0.0,
         };
         let cmds = mode.handle_event(&Event::Detections(vec![det]));
-        assert!(cmds.iter().any(|c| matches!(c, Command::StartRecord { .. })));
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::StartRecord { .. }))
+        );
     }
 
     #[test]

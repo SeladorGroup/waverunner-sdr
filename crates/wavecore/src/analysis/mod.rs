@@ -7,14 +7,14 @@
 //! Analysis operations are triggered by user action (not per-block).
 //! Only `SignalTracker::push()` runs in the real-time processing loop.
 
-pub mod measurement;
-pub mod tracking;
-pub mod comparison;
-pub mod burst;
-pub mod modulation;
 pub mod bitstream;
+pub mod burst;
+pub mod comparison;
 pub mod export;
+pub mod measurement;
+pub mod modulation;
 pub mod report;
+pub mod tracking;
 
 /// Unique ID for correlating analysis request/response pairs.
 pub type AnalysisId = u64;

@@ -92,10 +92,41 @@ impl SpectrumAnalyzer {
         spectrum
     }
 
+    /// Compute linear power spectrum (not dBFS) with fftshift.
+    ///
+    /// Used internally by `compute_averaged_spectrum` to average in the linear
+    /// power domain (correct per Welch's method) before converting to dB.
+    fn compute_spectrum_linear(&mut self, samples: &[Sample]) -> Vec<f32> {
+        let n = self.fft_size;
+        let fft = self.planner.plan_fft_forward(n);
+
+        let mut buffer: Vec<Sample> = Vec::with_capacity(n);
+        for i in 0..n {
+            if i < samples.len() {
+                buffer.push(samples[i] * self.window[i]);
+            } else {
+                buffer.push(Sample::new(0.0, 0.0));
+            }
+        }
+
+        fft.process(&mut buffer);
+
+        let half = n / 2;
+        let mut spectrum = vec![0.0f32; n];
+        for (i, bin) in buffer.iter().enumerate() {
+            let mag_sq = bin.norm_sqr();
+            let power = mag_sq / (n as f32 * n as f32 * self.window_power);
+            let shifted_idx = (i + half) % n;
+            spectrum[shifted_idx] = power;
+        }
+        spectrum
+    }
+
     /// Compute averaged spectrum using Welch's method.
     ///
     /// Splits `samples` into overlapping segments of `fft_size`, windows each,
-    /// computes FFT, and averages the power spectra. This reduces variance.
+    /// computes FFT, and averages the power spectra. Averaging is done in the
+    /// linear power domain (correct per Welch's method), then converted to dBFS.
     ///
     /// `overlap` is a fraction from 0.0 (no overlap) to less than 1.0
     /// (e.g., 0.5 for 50% overlap).
@@ -114,24 +145,30 @@ impl SpectrumAnalyzer {
             return self.compute_spectrum(samples);
         }
 
-        let mut avg_spectrum = vec![0.0f32; n];
+        // Average in linear power domain (not dB) to avoid Jensen's inequality bias
+        let mut avg_linear = vec![0.0f32; n];
 
         for seg in 0..num_segments {
             let start = seg * step;
             let segment = &samples[start..start + n];
-            let spectrum = self.compute_spectrum(segment);
-            for (avg, val) in avg_spectrum.iter_mut().zip(spectrum.iter()) {
+            let linear = self.compute_spectrum_linear(segment);
+            for (avg, val) in avg_linear.iter_mut().zip(linear.iter()) {
                 *avg += val;
             }
         }
 
-        // Average
+        // Average, then convert to dBFS
         let scale = 1.0 / num_segments as f32;
-        for val in &mut avg_spectrum {
+        for val in &mut avg_linear {
             *val *= scale;
+            *val = if *val > 0.0 {
+                10.0 * val.log10()
+            } else {
+                -200.0
+            };
         }
 
-        avg_spectrum
+        avg_linear
     }
 }
 
@@ -189,7 +226,7 @@ pub fn compute_spectrum_with_fft(
 ///
 /// The estimate is: Ŝ(f) = (1/K) · Σ_{k=0}^{K-1} |Y_k(f)|²
 ///
-/// where Y_k is the DFT of x[n]·v_k[n] and v_k are the DPSS sequences.
+/// where Y_k is the DFT of `x[n]·v_k[n]` and v_k are the DPSS sequences.
 ///
 /// Typical parameters:
 /// - NW = 3-4 (half-bandwidth, resolution = 2·NW/N bins)
@@ -283,11 +320,11 @@ impl MultitaperAnalyzer {
 /// Efficient when you only need power at specific frequencies (e.g., DTMF detection,
 /// single-tone detection, frequency monitoring).
 ///
-/// Mathematically equivalent to: X[k] = Σ x[n]·e^{-j2πkn/N}
+/// Mathematically equivalent to: `X[k] = Σ x[n]·e^{-j2πkn/N}`
 ///
 /// Uses the second-order recurrence:
-///   s[n] = x[n] + 2·cos(2πk/N)·s[n-1] - s[n-2]
-///   X[k] = s[N-1] - e^{-j2πk/N}·s[N-2]
+///   `s[n] = x[n] + 2·cos(2πk/N)·s[n-1] - s[n-2]`
+///   `X[k] = s[N-1] - e^{-j2πk/N}·s[N-2]`
 ///
 /// This avoids trig functions inside the loop (only one cosine precomputed).
 ///
@@ -309,7 +346,8 @@ pub fn goertzel(samples: &[Sample], target_freq_hz: f64, sample_rate: f64) -> (f
     let mut s1 = 0.0f32; // s[n-1]
     let mut s2 = 0.0f32; // s[n-2]
 
-    // Process I and Q channels separately
+    // Process I and Q channels with independent recurrences.
+    // By linearity of the DFT, X[k] = DFT(x_re)[k] + j * DFT(x_im)[k].
     let mut s1_q = 0.0f32;
     let mut s2_q = 0.0f32;
 
@@ -323,12 +361,17 @@ pub fn goertzel(samples: &[Sample], target_freq_hz: f64, sample_rate: f64) -> (f
         s1_q = temp_q;
     }
 
-    // Final computation
-    let twiddle_re = omega.cos() as f32;
-    let twiddle_im = -(omega.sin() as f32);
+    // Final computation: combine two real Goertzel results into complex DFT.
+    // Real Goertzel: X_ch[k] = s1 - e^{-jω} * s2
+    //   = (s1 - s2*cos(ω)) + j*(s2*sin(ω))
+    // Total: X[k] = X_re[k] + j * X_im[k]
+    //   result_re = (s1 - s2*cos(ω)) - s2_q*sin(ω)
+    //   result_im = s2*sin(ω) + (s1_q - s2_q*cos(ω))
+    let cos_w = omega.cos() as f32;
+    let sin_w = omega.sin() as f32;
 
-    let result_re = s1 - s2 * twiddle_re - s2_q * twiddle_im;
-    let result_im = s1_q - s2_q * twiddle_re + s2 * twiddle_im;
+    let result_re = (s1 - s2 * cos_w) - s2_q * sin_w;
+    let result_im = s2 * sin_w + (s1_q - s2_q * cos_w);
 
     let result = Sample::new(result_re, result_im);
     let power = result.norm_sqr() / (n as f32 * n as f32);

@@ -138,11 +138,7 @@ impl<'a> Widget for WaterfallWidget<'a> {
                             } else {
                                 // Map freq_idx to actual bin
                                 let bin = freq_idx * row.len() / freq_bins_needed;
-                                if bin < row.len() {
-                                    row[bin]
-                                } else {
-                                    -100.0
-                                }
+                                if bin < row.len() { row[bin] } else { -100.0 }
                             }
                         } else {
                             -100.0

@@ -111,11 +111,7 @@ fn soak_no_drops_under_normal_load() {
     // SLO drop-budget check (latency/throughput SLOs only valid in release builds)
     let slo = Slo::load();
     let violations = slo.check_drop_budget(&stats);
-    assert!(
-        violations.is_empty(),
-        "SLO violations: {:?}",
-        violations
-    );
+    assert!(violations.is_empty(), "SLO violations: {:?}", violations);
 }
 
 /// Soak test with decoder enabled — verifies decode + DSP chain keeps up.
@@ -189,11 +185,7 @@ fn soak_with_decoder_no_drops() {
     // SLO drop-budget check (latency/throughput SLOs only valid in release builds)
     let slo = Slo::load();
     let violations = slo.check_drop_budget(&stats);
-    assert!(
-        violations.is_empty(),
-        "SLO violations: {:?}",
-        violations
-    );
+    assert!(violations.is_empty(), "SLO violations: {:?}", violations);
 }
 
 // --- Extended soak tests (run via `cargo test -- --ignored`) ---

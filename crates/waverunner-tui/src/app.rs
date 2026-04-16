@@ -58,7 +58,7 @@ impl ViewTab {
     }
 }
 
-/// Available decoder names for the [d]ecoder key.
+/// Available decoder names for the `[d]`ecoder key.
 ///
 /// Sourced from the canonical registry list so names can never drift.
 pub const AVAILABLE_DECODERS: &[&str] = wavecore::dsp::decoders::DECODER_NAMES;
@@ -69,16 +69,16 @@ const MAX_DECODED_MESSAGES: usize = 500;
 /// Tuning step sizes available for keyboard navigation.
 /// Organized by SI prefix for intuitive stepping.
 pub const STEP_SIZES: &[f64] = &[
-    1.0,           // 1 Hz
-    10.0,          // 10 Hz
-    100.0,         // 100 Hz
-    1_000.0,       // 1 kHz
-    5_000.0,       // 5 kHz
-    10_000.0,      // 10 kHz
-    25_000.0,      // 25 kHz (VHF channel spacing)
-    100_000.0,     // 100 kHz
-    1_000_000.0,   // 1 MHz
-    10_000_000.0,  // 10 MHz
+    1.0,          // 1 Hz
+    10.0,         // 10 Hz
+    100.0,        // 100 Hz
+    1_000.0,      // 1 kHz
+    5_000.0,      // 5 kHz
+    10_000.0,     // 10 kHz
+    25_000.0,     // 25 kHz (VHF channel spacing)
+    100_000.0,    // 100 kHz
+    1_000_000.0,  // 1 MHz
+    10_000_000.0, // 10 MHz
 ];
 
 /// Demodulation mode selection.
@@ -307,17 +307,12 @@ pub struct App {
     /// Regional frequency database for band identification.
     pub frequency_db: FrequencyDb,
 
-    /// Latest signal identification result (from [i] key).
+    /// Latest signal identification result (from `[i]` key).
     pub identify_result: Option<wavecore::signal_identify::IdentifyResult>,
 }
 
 impl App {
-    pub fn new(
-        frequency: f64,
-        sample_rate: f64,
-        gain: String,
-        fft_size: usize,
-    ) -> Self {
+    pub fn new(frequency: f64, sample_rate: f64, gain: String, fft_size: usize) -> Self {
         let waterfall_rows = 100;
         Self {
             frequency,
@@ -530,7 +525,12 @@ impl App {
     /// Cycle mode forward: None → aviation → pager → fm-broadcast → general → None.
     /// Returns commands from activating/deactivating the mode.
     pub fn cycle_mode_forward(&mut self) -> Vec<wavecore::session::Command> {
-        let profiles = self.mode_controller.list_profiles().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let profiles = self
+            .mode_controller
+            .list_profiles()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         let current = self.mode_controller.active_mode().map(|s| s.to_string());
 
         let mut cmds = self.mode_controller.deactivate();
@@ -573,7 +573,12 @@ impl App {
 
     /// Cycle mode backward.
     pub fn cycle_mode_back(&mut self) -> Vec<wavecore::session::Command> {
-        let profiles = self.mode_controller.list_profiles().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let profiles = self
+            .mode_controller
+            .list_profiles()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         let current = self.mode_controller.active_mode().map(|s| s.to_string());
 
         let mut cmds = self.mode_controller.deactivate();

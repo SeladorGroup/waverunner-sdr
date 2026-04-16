@@ -121,10 +121,7 @@ pub fn analyze_bursts(samples: &[Sample], config: &BurstConfig) -> BurstReport {
     // Compute timing statistics
     let widths_us: Vec<f64> = bursts.iter().map(|b| b.duration_us).collect();
     let mean_pw = widths_us.iter().sum::<f64>() / widths_us.len() as f64;
-    let pw_var = widths_us
-        .iter()
-        .map(|w| (w - mean_pw).powi(2))
-        .sum::<f64>()
+    let pw_var = widths_us.iter().map(|w| (w - mean_pw).powi(2)).sum::<f64>()
         / widths_us.len().max(1) as f64;
     let pw_std = pw_var.sqrt();
 
@@ -197,7 +194,8 @@ mod tests {
         noise_amplitude: f32,
         sample_rate: f64,
     ) -> (Vec<Sample>, BurstConfig) {
-        let mut samples = vec![Sample::new(noise_amplitude * 0.01, noise_amplitude * 0.01); total_samples];
+        let mut samples =
+            vec![Sample::new(noise_amplitude * 0.01, noise_amplitude * 0.01); total_samples];
         for &(start, end) in burst_ranges {
             for val in &mut samples[start..end.min(total_samples)] {
                 *val = Sample::new(burst_amplitude, 0.0);
@@ -292,13 +290,20 @@ mod tests {
         );
         let report = analyze_bursts(&samples, &config);
         assert_eq!(report.burst_count, 4);
-        assert!(report.pri_std_us > 100.0, "Irregular bursts should have high PRI std");
+        assert!(
+            report.pri_std_us > 100.0,
+            "Irregular bursts should have high PRI std"
+        );
     }
 
     #[test]
     fn burst_snr_measurement() {
         let (samples, config) = make_burst_signal(10000, &[(2000, 3000)], 1.0, 0.001, 1e6);
         let report = analyze_bursts(&samples, &config);
-        assert!(report.mean_burst_snr_db > 20.0, "Burst SNR should be high, got {}", report.mean_burst_snr_db);
+        assert!(
+            report.mean_burst_snr_db > 20.0,
+            "Burst SNR should be high, got {}",
+            report.mean_burst_snr_db
+        );
     }
 }

@@ -11,6 +11,7 @@ pub mod probe;
 pub mod record;
 pub mod recover;
 pub mod scan;
+pub mod tools;
 pub mod tune;
 
 use anyhow::Result;
@@ -49,6 +50,8 @@ pub enum Command {
     Bookmark(bookmark::BookmarkArgs),
     /// Identify a signal by frequency (band lookup + classifier + decoder trial)
     Identify(identify::IdentifyArgs),
+    /// Show external decoder tool status and install hints
+    Tools(tools::ToolsArgs),
 }
 
 pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
@@ -73,5 +76,9 @@ pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
             Ok(())
         }
         Command::Identify(args) => identify::run(args, device_index).await,
+        Command::Tools(args) => {
+            tools::run(args)?;
+            Ok(())
+        }
     }
 }

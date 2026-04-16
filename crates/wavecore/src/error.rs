@@ -1,3 +1,5 @@
+//! Error types for hardware, DSP, and session operations.
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]

@@ -2,9 +2,9 @@ use crate::types::Sample;
 
 /// Least Mean Squares (LMS) adaptive filter.
 ///
-/// Minimizes E[|e[n]|²] where e[n] = d[n] - w^H·x[n].
+/// Minimizes `E[|e[n]|²]` where `e[n] = d[n] - w^H·x[n]`.
 ///
-/// Update rule: w[n+1] = w[n] + μ · e*[n] · x[n]
+/// Update rule: `w[n+1] = w[n] + μ · e*[n] · x[n]`
 ///
 /// The step size μ controls convergence:
 /// - Too large: diverges
@@ -31,10 +31,10 @@ impl LmsFilter {
 
     /// Process one sample: compute output, update weights.
     ///
-    /// `input`: current input sample x[n]
-    /// `desired`: desired output d[n]
+    /// `input`: current input sample `x[n]`
+    /// `desired`: desired output `d[n]`
     ///
-    /// Returns: (output y[n], error e[n])
+    /// Returns: (output `y[n]`, error `e[n]`)
     pub fn step(&mut self, input: Sample, desired: Sample) -> (Sample, Sample) {
         let len = self.weights.len();
         self.buffer[self.pos] = input;
@@ -67,7 +67,7 @@ impl LmsFilter {
 /// Normalized LMS (NLMS) adaptive filter.
 ///
 /// Variant of LMS that normalizes the step size by input power:
-///   w[n+1] = w[n] + (μ / (δ + ||x||²)) · e*[n] · x[n]
+///   `w[n+1] = w[n] + (μ / (δ + ||x||²)) · e*[n] · x[n]`
 ///
 /// This makes convergence independent of input signal level.
 /// δ is a small regularization constant to prevent division by zero.
@@ -126,7 +126,7 @@ impl NlmsFilter {
 /// Recursive Least Squares (RLS) adaptive filter.
 ///
 /// Minimizes the exponentially weighted least squares cost:
-///   J[n] = Σ_{k=0}^{n} λ^{n-k} |e[k]|²
+///   `J[n] = Σ_{k=0}^{n} λ^{n-k} |e[k]|²`
 ///
 /// where λ (forgetting factor) controls the effective memory:
 /// - λ = 1: infinite memory (converges to Wiener solution)
@@ -140,8 +140,7 @@ pub struct RlsFilter {
     /// Inverse correlation matrix P = R^{-1}, stored as flattened NxN.
     p_matrix: Vec<f32>,
     lambda: f32,
-    #[allow(dead_code)]
-    delta: f32,
+    _delta: f32,
     buffer: Vec<Sample>,
     pos: usize,
     len: usize,
@@ -166,7 +165,7 @@ impl RlsFilter {
             weights: vec![Sample::new(0.0, 0.0); n],
             p_matrix,
             lambda: forgetting_factor,
-            delta,
+            _delta: delta,
             buffer: vec![Sample::new(0.0, 0.0); n],
             pos: 0,
             len: n,
@@ -240,11 +239,11 @@ impl RlsFilter {
 /// Uses the constrained LMS algorithm to estimate and subtract a
 /// single complex sinusoid from the signal:
 ///
-///   x_hat[n] = A · e^{j(ω₀n + φ)}
-///   y[n] = x[n] - x_hat[n]
+///   `x_hat[n] = A · e^{j(ω₀n + φ)}`
+///   `y[n] = x[n] - x_hat[n]`
 ///
 /// The frequency ω₀ and amplitude A are adapted using gradient descent
-/// on E[|y[n]|²].
+/// on `E[|y[n]|²]`.
 ///
 /// This is equivalent to a second-order IIR notch filter with adaptive
 /// center frequency, but with guaranteed stability.
@@ -260,8 +259,7 @@ pub struct AdaptiveNotch {
     /// Amplitude adaptation rate
     mu_amp: f32,
     /// Notch bandwidth (3dB) in radians/sample
-    #[allow(dead_code)]
-    bandwidth: f32,
+    _bandwidth: f32,
 }
 
 impl AdaptiveNotch {
@@ -280,7 +278,7 @@ impl AdaptiveNotch {
             phase: 0.0,
             mu_freq: 0.001,
             mu_amp: 0.01,
-            bandwidth: bw,
+            _bandwidth: bw,
         }
     }
 
@@ -328,10 +326,10 @@ impl AdaptiveNotch {
 ///
 /// Implements a Type III FIR filter that approximates the ideal Hilbert
 /// transform H(f) = -j·sgn(f). The output, combined with the input,
-/// forms the analytic signal: z[n] = x[n] + j·H{x[n]}.
+/// forms the analytic signal: `z[n] = x[n] + j·H{x[n]}`.
 ///
 /// Uses the windowed ideal impulse response:
-///   h[n] = (2/(πn)) · sin²(πn/2)  for odd n, 0 for even n
+///   `h[n] = (2/(πn)) · sin²(πn/2)` for odd n, 0 for even n
 ///
 /// The filter length must be odd for linear phase (Type III symmetry).
 pub struct HilbertTransform {
@@ -379,7 +377,7 @@ impl HilbertTransform {
 
     /// Transform a real-valued sample to produce the Hilbert (imaginary) component.
     ///
-    /// To get the analytic signal: z[n] = x[n - delay] + j·hilbert(x[n])
+    /// To get the analytic signal: `z[n] = x[n - delay] + j·hilbert(x[n])`
     pub fn process_sample(&mut self, input: f32) -> f32 {
         let len = self.coefficients.len();
         self.buffer[self.pos] = input;
@@ -419,7 +417,7 @@ pub fn median_filter(samples: &[Sample], window_size: usize) -> Vec<Sample> {
         let mut magnitudes: Vec<(f32, usize)> = (start..end)
             .map(|j| (samples[j].norm_sqr().sqrt(), j))
             .collect();
-        magnitudes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        magnitudes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let median_idx = magnitudes[magnitudes.len() / 2].1;
         // Use the sample at the median magnitude (preserves phase)

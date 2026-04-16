@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -110,7 +110,8 @@ fn dispatch_event(app: &AppHandle, event: Event, session_start: Instant) {
                 id: u64,
                 result: wavecore::analysis::AnalysisResult,
             }
-            app.emit("wr:analysis-result", &AnalysisEvent { id, result }).ok();
+            app.emit("wr:analysis-result", &AnalysisEvent { id, result })
+                .ok();
         }
         Event::TrackingUpdate(snapshot) => {
             app.emit("wr:tracking", &snapshot).ok();

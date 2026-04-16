@@ -136,9 +136,8 @@ impl ReplayDevice {
 
         // For WAV files, validate the header up front
         if format == IqFormat::WavF32 {
-            let reader = hound::WavReader::open(path).map_err(|e| {
-                HardwareError::DriverError(format!("Invalid WAV file: {e}"))
-            })?;
+            let reader = hound::WavReader::open(path)
+                .map_err(|e| HardwareError::DriverError(format!("Invalid WAV file: {e}")))?;
             let spec = reader.spec();
             if spec.channels != 2 {
                 return Err(HardwareError::DriverError(format!(
@@ -257,15 +256,30 @@ impl SdrDevice for ReplayDevice {
         };
 
         let result = match self.format {
-            IqFormat::Cf32Le => {
-                replay_cf32(&self.path, block_size, &self.stop_flag, block_duration, looping, &mut callback)
-            }
-            IqFormat::Cu8 => {
-                replay_cu8(&self.path, block_size, &self.stop_flag, block_duration, looping, &mut callback)
-            }
-            IqFormat::WavF32 => {
-                replay_wav(&self.path, block_size, &self.stop_flag, block_duration, looping, &mut callback)
-            }
+            IqFormat::Cf32Le => replay_cf32(
+                &self.path,
+                block_size,
+                &self.stop_flag,
+                block_duration,
+                looping,
+                &mut callback,
+            ),
+            IqFormat::Cu8 => replay_cu8(
+                &self.path,
+                block_size,
+                &self.stop_flag,
+                block_duration,
+                looping,
+                &mut callback,
+            ),
+            IqFormat::WavF32 => replay_wav(
+                &self.path,
+                block_size,
+                &self.stop_flag,
+                block_duration,
+                looping,
+                &mut callback,
+            ),
         };
 
         self.streaming.store(false, Ordering::Relaxed);
@@ -362,9 +376,7 @@ fn replay_cu8(
     // Precompute lookup table: u8 → normalized f32
     // This is the same conversion as RTL-SDR hardware:
     //   f = (byte - 127.5) / 127.5
-    let lut: Vec<f32> = (0..256)
-        .map(|b| (b as f32 - 127.5) / 127.5)
-        .collect();
+    let lut: Vec<f32> = (0..256).map(|b| (b as f32 - 127.5) / 127.5).collect();
 
     loop {
         let file = File::open(path)
@@ -444,9 +456,7 @@ fn replay_wav(
                 let i = match sample_iter.next() {
                     Some(Ok(v)) => v,
                     Some(Err(e)) => {
-                        return Err(HardwareError::StreamError(format!(
-                            "WAV read error: {e}"
-                        )));
+                        return Err(HardwareError::StreamError(format!("WAV read error: {e}")));
                     }
                     None => {
                         exhausted = true;
@@ -456,9 +466,7 @@ fn replay_wav(
                 let q = match sample_iter.next() {
                     Some(Ok(v)) => v,
                     Some(Err(e)) => {
-                        return Err(HardwareError::StreamError(format!(
-                            "WAV read error: {e}"
-                        )));
+                        return Err(HardwareError::StreamError(format!("WAV read error: {e}")));
                     }
                     None => {
                         exhausted = true;
@@ -508,9 +516,7 @@ fn read_exact_or_eof(reader: &mut BufReader<File>, buf: &mut [u8]) -> Result<usi
             Ok(n) => total += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => {
-                return Err(HardwareError::StreamError(format!(
-                    "Read error: {e}"
-                )));
+                return Err(HardwareError::StreamError(format!("Read error: {e}")));
             }
         }
     }
@@ -559,8 +565,7 @@ mod tests {
     /// Create a temporary WAV file with known IQ samples.
     fn write_test_wav(samples: &[Sample], sample_rate: u32) -> PathBuf {
         let path = unique_path("wav");
-        let mut writer =
-            crate::recording::WavIqWriter::new(&path, sample_rate as f64).unwrap();
+        let mut writer = crate::recording::WavIqWriter::new(&path, sample_rate as f64).unwrap();
         writer.write_samples(samples).unwrap();
         writer.finish().unwrap();
         path
@@ -588,9 +593,11 @@ mod tests {
         // We need to read the file with block_size <= sample count.
         // But we can't set block size through the trait... the default
         // block_size (262144) will read all 4 samples in one call.
-        device.start_rx(Box::new(move |samples| {
-            received_clone.lock().unwrap().extend_from_slice(samples);
-        })).unwrap();
+        device
+            .start_rx(Box::new(move |samples| {
+                received_clone.lock().unwrap().extend_from_slice(samples);
+            }))
+            .unwrap();
 
         let got = received.lock().unwrap();
         assert_eq!(got.len(), 4);
@@ -612,9 +619,11 @@ mod tests {
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
 
-        device.start_rx(Box::new(move |samples| {
-            received_clone.lock().unwrap().extend_from_slice(samples);
-        })).unwrap();
+        device
+            .start_rx(Box::new(move |samples| {
+                received_clone.lock().unwrap().extend_from_slice(samples);
+            }))
+            .unwrap();
 
         let got = received.lock().unwrap();
         assert_eq!(got.len(), 2);
@@ -642,9 +651,11 @@ mod tests {
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
 
-        device.start_rx(Box::new(move |samples| {
-            received_clone.lock().unwrap().extend_from_slice(samples);
-        })).unwrap();
+        device
+            .start_rx(Box::new(move |samples| {
+                received_clone.lock().unwrap().extend_from_slice(samples);
+            }))
+            .unwrap();
 
         let got = received.lock().unwrap();
         assert_eq!(got.len(), 3);
@@ -700,8 +711,10 @@ mod tests {
         let samples: Vec<Sample> = (0..10000)
             .map(|i| {
                 let t = i as f32 / 10000.0;
-                Sample::new((t * std::f32::consts::TAU * 100.0).cos(),
-                           (t * std::f32::consts::TAU * 100.0).sin())
+                Sample::new(
+                    (t * std::f32::consts::TAU * 100.0).cos(),
+                    (t * std::f32::consts::TAU * 100.0).sin(),
+                )
             })
             .collect();
         let path = write_test_cf32(&samples);
@@ -718,9 +731,11 @@ mod tests {
         // We can't easily stop from within callback since we need
         // the trait object. Instead, test that the device finishes
         // reading the file and stops naturally.
-        stop_device.start_rx(Box::new(move |samples| {
-            count_clone.fetch_add(samples.len() as u64, Ordering::Relaxed);
-        })).unwrap();
+        stop_device
+            .start_rx(Box::new(move |samples| {
+                count_clone.fetch_add(samples.len() as u64, Ordering::Relaxed);
+            }))
+            .unwrap();
 
         // Should have received all 10000 samples
         assert_eq!(count.load(Ordering::Relaxed), 10000);
@@ -769,13 +784,7 @@ mod tests {
             IqFormat::from_path(Path::new("recording.wav")),
             Some(IqFormat::WavF32)
         );
-        assert_eq!(
-            IqFormat::from_path(Path::new("recording.xyz")),
-            None
-        );
-        assert_eq!(
-            IqFormat::from_path(Path::new("no_extension")),
-            None
-        );
+        assert_eq!(IqFormat::from_path(Path::new("recording.xyz")), None);
+        assert_eq!(IqFormat::from_path(Path::new("no_extension")), None);
     }
 }

@@ -48,7 +48,7 @@ pub struct SpectrumData {
 ///
 /// Holds the current spectrum data and peak hold state. GPU pipeline
 /// creation and rendering commands are deferred to integration with
-/// the wgpu render pass (handled by the [`Renderer`]).
+/// the wgpu render pass (handled by the `Renderer`).
 pub struct SpectrumRenderer {
     config: SpectrumConfig,
     current_data: SpectrumData,
@@ -78,9 +78,7 @@ impl SpectrumRenderer {
             if self.peak_hold_state.len() != data.spectrum_db.len() {
                 self.peak_hold_state = data.spectrum_db.clone();
             } else {
-                for (peak, &current) in
-                    self.peak_hold_state.iter_mut().zip(&data.spectrum_db)
-                {
+                for (peak, &current) in self.peak_hold_state.iter_mut().zip(&data.spectrum_db) {
                     if current > *peak {
                         *peak = current;
                     } else {

@@ -6,7 +6,7 @@
 //! - **Constellation**: IQ scatter plot with persistence
 //!
 //! Designed to be embedded in Tauri/winit applications or used standalone.
-//! The [`Renderer`] wraps all sub-renderers and manages shared GPU resources
+//! The `Renderer` wraps all sub-renderers and manages shared GPU resources
 //! (colormap texture, bind groups).
 
 pub mod colormap;

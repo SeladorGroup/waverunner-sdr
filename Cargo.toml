@@ -13,7 +13,12 @@ members = [
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-only"
+repository = "https://github.com/SeladorGroup/waverunner-sdr"
+homepage = "https://github.com/SeladorGroup/waverunner-sdr"
+readme = "README.md"
+keywords = ["sdr", "radio", "dsp", "rtl-sdr", "signal-processing"]
+categories = ["science", "hardware-support", "command-line-utilities"]
 
 [workspace.dependencies]
 # Core types
@@ -47,7 +52,7 @@ serde_json = "1"
 toml = "0.8"
 
 # Image export
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Audio/Recording
 hound = "3.5"
@@ -62,10 +67,10 @@ wgpu = "24"
 bytemuck = { version = "1", features = ["derive"] }
 
 # Tauri
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2" }
 tauri-build = { version = "2", features = [] }
 
 # Internal crates
-wavecore = { path = "crates/wavecore" }
-waveplugins = { path = "crates/waveplugins" }
-waveviz = { path = "crates/waveviz" }
+wavecore = { version = "0.1.0", path = "crates/wavecore" }
+waveplugins = { version = "0.1.0", path = "crates/waveplugins" }
+waveviz = { version = "0.1.0", path = "crates/waveviz" }

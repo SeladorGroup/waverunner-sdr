@@ -268,9 +268,7 @@ mod tests {
 
     #[test]
     fn empty_classifier_returns_unknown() {
-        let c = RuleClassifier {
-            rules: Vec::new(),
-        };
+        let c = RuleClassifier { rules: Vec::new() };
         assert!(matches!(
             c.classify(100_000_000.0, 200_000.0, 20.0),
             SignalClass::Unknown

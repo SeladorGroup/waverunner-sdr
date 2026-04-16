@@ -51,12 +51,7 @@ impl CwDemod {
         // Narrow bandpass filter for CW selectivity
         // Filter centered at DC (signal is at baseband after DDC)
         // Use lowpass at bandwidth/2
-        let cw_bpf = iir::butter(
-            4,
-            bandwidth_hz / 2.0,
-            iir::FilterBand::Lowpass,
-            sample_rate,
-        );
+        let cw_bpf = iir::butter(4, bandwidth_hz / 2.0, iir::FilterBand::Lowpass, sample_rate);
 
         // Audio lowpass: remove mixer products above 1.5 kHz
         let audio_lpf = iir::butter(2, 1500.0, iir::FilterBand::Lowpass, sample_rate);
@@ -127,12 +122,8 @@ impl Demodulator for CwDemod {
                 Ok(())
             }
             "bandwidth" => {
-                self.cw_bpf = iir::butter(
-                    4,
-                    value / 2.0,
-                    iir::FilterBand::Lowpass,
-                    self.sample_rate,
-                );
+                self.cw_bpf =
+                    iir::butter(4, value / 2.0, iir::FilterBand::Lowpass, self.sample_rate);
                 Ok(())
             }
             _ => Err(format!("Unknown CW parameter: {key}")),
@@ -230,9 +221,7 @@ mod tests {
 
         // Signal at DC (in-band for the CW filter)
         let n = 4000;
-        let input_in: Vec<Sample> = (0..n)
-            .map(|_| Sample::new(0.5, 0.0))
-            .collect();
+        let input_in: Vec<Sample> = (0..n).map(|_| Sample::new(0.5, 0.0)).collect();
 
         let audio_in = demod.process(&input_in);
 

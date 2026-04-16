@@ -42,8 +42,7 @@ pub struct RecordArgs {
 }
 
 pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
-    let gain_mode = wavecore::util::parse_gain(&args.gain)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
@@ -57,8 +56,8 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     };
 
     let registry = DecoderRegistry::new();
-    let (session, events) = SessionManager::new(config, registry)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (session, events) =
+        SessionManager::new(config, registry).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Start recording
     let format = match args.format.as_str() {

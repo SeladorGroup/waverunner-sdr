@@ -28,7 +28,11 @@ pub fn new_session_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u32;
-    format!("{:04x}{:04x}", pid.wrapping_add(counter as u32) & 0xFFFF, ts & 0xFFFF)
+    format!(
+        "{:04x}{:04x}",
+        pid.wrapping_add(counter as u32) & 0xFFFF,
+        ts & 0xFFFF
+    )
 }
 
 /// Known component names for structured logging.

@@ -23,16 +23,17 @@ mod spectrum;
 mod ui;
 mod waterfall;
 
+use std::env;
 use std::io;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use crossterm::ExecutableCommand;
 use crossterm::event::KeyEventKind;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -89,7 +90,7 @@ fn main() -> Result<()> {
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/waverunner-tui.log");
+        .open(env::temp_dir().join("waverunner-tui.log"));
     match log_file {
         Ok(file) => {
             tracing_subscriber::fmt()
@@ -120,8 +121,8 @@ fn main() -> Result<()> {
 
     let mut registry = DecoderRegistry::new();
     decoders::register_all(&mut registry);
-    let (session, events) = SessionManager::new(config, registry)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (session, events) =
+        SessionManager::new(config, registry).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Create application state
     let mut app = App::new(frequency, sample_rate, cli.gain.clone(), cli.fft_size);
@@ -225,12 +226,20 @@ fn main() -> Result<()> {
                     Action::CycleDecoder => {
                         let prev = app.active_decoder.clone();
                         app.cycle_decoder();
-                        send_decoder_change(&session, prev.as_deref(), app.active_decoder.as_deref());
+                        send_decoder_change(
+                            &session,
+                            prev.as_deref(),
+                            app.active_decoder.as_deref(),
+                        );
                     }
                     Action::CycleDecoderBack => {
                         let prev = app.active_decoder.clone();
                         app.cycle_decoder_back();
-                        send_decoder_change(&session, prev.as_deref(), app.active_decoder.as_deref());
+                        send_decoder_change(
+                            &session,
+                            prev.as_deref(),
+                            app.active_decoder.as_deref(),
+                        );
                     }
                     Action::ToggleSquelch => app.toggle_squelch(),
                     Action::SquelchUp => app.squelch_up(),
@@ -262,7 +271,8 @@ fn main() -> Result<()> {
                     Action::RunMeasurement => {
                         // Measure around center of spectrum (or strongest detection)
                         let fft_size = app.dsp.spectrum_db.len();
-                        let (center_bin, width_bins) = if let Some(det) = app.dsp.detections.first() {
+                        let (center_bin, width_bins) = if let Some(det) = app.dsp.detections.first()
+                        {
                             (det.bin.min(fft_size.saturating_sub(1)), 100)
                         } else {
                             (fft_size / 2, 100)
@@ -275,7 +285,12 @@ fn main() -> Result<()> {
                                 obw_threshold_db: 26.0,
                             },
                         );
-                        session.send(Command::RunAnalysis { id: app.frame_count, request }).ok();
+                        session
+                            .send(Command::RunAnalysis {
+                                id: app.frame_count,
+                                request,
+                            })
+                            .ok();
                     }
                     Action::ToggleTracking => {
                         app.tracking_active = !app.tracking_active;
@@ -291,10 +306,12 @@ fn main() -> Result<()> {
                     }
                     Action::CompareReference => {
                         if app.reference_captured {
-                            session.send(Command::RunAnalysis {
-                                id: app.frame_count,
-                                request: analysis::AnalysisRequest::CompareSpectra,
-                            }).ok();
+                            session
+                                .send(Command::RunAnalysis {
+                                    id: app.frame_count,
+                                    request: analysis::AnalysisRequest::CompareSpectra,
+                                })
+                                .ok();
                         }
                     }
                     Action::ExportCsv => {
@@ -302,9 +319,10 @@ fn main() -> Result<()> {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs();
-                        let path = format!("/tmp/waverunner_export_{timestamp}.csv");
+                        let path =
+                            env::temp_dir().join(format!("waverunner_export_{timestamp}.csv"));
                         let config = analysis::export::ExportConfig {
-                            path: std::path::PathBuf::from(&path),
+                            path,
                             format: analysis::export::ExportFormat::Csv,
                             content: analysis::export::ExportContent::Spectrum {
                                 spectrum_db: app.dsp.spectrum_db.clone(),
@@ -315,10 +333,7 @@ fn main() -> Result<()> {
                         session.send(Command::Export(config)).ok();
                     }
                     Action::AddBookmark => {
-                        let text = format!(
-                            "Bookmark @ {:.6} MHz",
-                            app.frequency / 1e6,
-                        );
+                        let text = format!("Bookmark @ {:.6} MHz", app.frequency / 1e6,);
                         session
                             .send(Command::AddAnnotation {
                                 kind: "bookmark".to_string(),
@@ -332,12 +347,11 @@ fn main() -> Result<()> {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs();
-                        let path = format!(
-                            "/tmp/waverunner_timeline_{timestamp}.json"
-                        );
+                        let path =
+                            env::temp_dir().join(format!("waverunner_timeline_{timestamp}.json"));
                         session
                             .send(Command::ExportTimeline {
-                                path: std::path::PathBuf::from(&path),
+                                path,
                                 format: wavecore::session::TimelineExportFormat::Json,
                             })
                             .ok();
@@ -377,9 +391,10 @@ fn main() -> Result<()> {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs();
-                        let path = format!("/tmp/waverunner_spectrum_{timestamp}.png");
+                        let path =
+                            env::temp_dir().join(format!("waverunner_spectrum_{timestamp}.png"));
                         let config = analysis::export::ExportConfig {
-                            path: std::path::PathBuf::from(&path),
+                            path,
                             format: analysis::export::ExportFormat::Png,
                             content: analysis::export::ExportContent::Spectrum {
                                 spectrum_db: app.dsp.spectrum_db.clone(),
@@ -443,6 +458,8 @@ fn send_demod_change(session: &SessionManager, prev: DemodMode, next: DemodMode,
             squelch: app.squelch,
             deemph_us: None,
             output_wav: None,
+            emit_visualization: true,
+            spectrum_update_interval_blocks: 1,
         };
         session.send(Command::StartDemod(config)).ok();
         session.send(Command::SetVolume(app.volume_f32())).ok();

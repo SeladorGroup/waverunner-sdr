@@ -68,8 +68,7 @@ pub fn export_session_report(
     format: &str,
 ) -> Result<String, String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
     }
 
     match format {
@@ -79,21 +78,36 @@ pub fn export_session_report(
             std::fs::write(path, &json).map_err(|e| format!("Write error: {e}"))?;
         }
         "csv" => {
-            let mut file = std::fs::File::create(path)
-                .map_err(|e| format!("Failed to create file: {e}"))?;
+            let mut file =
+                std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-            writeln!(file, "section,key,value")
-                .map_err(|e| format!("Write error: {e}"))?;
+            writeln!(file, "section,key,value").map_err(|e| format!("Write error: {e}"))?;
 
             // Metadata
-            writeln!(file, "metadata,start_time,\"{}\"", report.metadata.start_time)
-                .map_err(|e| format!("Write error: {e}"))?;
-            writeln!(file, "metadata,duration_secs,{:.1}", report.metadata.duration_secs)
-                .map_err(|e| format!("Write error: {e}"))?;
-            writeln!(file, "metadata,center_freq,{:.0}", report.metadata.center_freq)
-                .map_err(|e| format!("Write error: {e}"))?;
-            writeln!(file, "metadata,sample_rate,{:.0}", report.metadata.sample_rate)
-                .map_err(|e| format!("Write error: {e}"))?;
+            writeln!(
+                file,
+                "metadata,start_time,\"{}\"",
+                report.metadata.start_time
+            )
+            .map_err(|e| format!("Write error: {e}"))?;
+            writeln!(
+                file,
+                "metadata,duration_secs,{:.1}",
+                report.metadata.duration_secs
+            )
+            .map_err(|e| format!("Write error: {e}"))?;
+            writeln!(
+                file,
+                "metadata,center_freq,{:.0}",
+                report.metadata.center_freq
+            )
+            .map_err(|e| format!("Write error: {e}"))?;
+            writeln!(
+                file,
+                "metadata,sample_rate,{:.0}",
+                report.metadata.sample_rate
+            )
+            .map_err(|e| format!("Write error: {e}"))?;
             writeln!(file, "metadata,gain,\"{}\"", report.metadata.gain)
                 .map_err(|e| format!("Write error: {e}"))?;
             writeln!(file, "metadata,fft_size,{}", report.metadata.fft_size)
@@ -113,12 +127,8 @@ pub fn export_session_report(
             // Annotations
             for ann in &report.annotations {
                 let escaped = ann.text.replace('"', "\"\"");
-                writeln!(
-                    file,
-                    "annotation,{:.3},\"{}\"",
-                    ann.timestamp_s, escaped
-                )
-                .map_err(|e| format!("Write error: {e}"))?;
+                writeln!(file, "annotation,{:.3},\"{}\"", ann.timestamp_s, escaped)
+                    .map_err(|e| format!("Write error: {e}"))?;
             }
         }
         _ => return Err(format!("Unsupported format: {format}")),
@@ -134,8 +144,7 @@ pub fn export_scan_report(
     format: &str,
 ) -> Result<String, String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
     }
 
     match format {
@@ -145,8 +154,8 @@ pub fn export_scan_report(
             std::fs::write(path, &json).map_err(|e| format!("Write error: {e}"))?;
         }
         "csv" => {
-            let mut file = std::fs::File::create(path)
-                .map_err(|e| format!("Failed to create file: {e}"))?;
+            let mut file =
+                std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
             writeln!(file, "frequency_hz,power_db,snr_db,bandwidth_hz")
                 .map_err(|e| format!("Write error: {e}"))?;
@@ -188,14 +197,12 @@ mod tests {
                 fft_size: 2048,
             },
             scan_results: None,
-            decoded_messages: vec![
-                ReportDecodedMessage {
-                    decoder: "pocsag".to_string(),
-                    elapsed_ms: 5000,
-                    summary: "Test message".to_string(),
-                    fields: BTreeMap::new(),
-                },
-            ],
+            decoded_messages: vec![ReportDecodedMessage {
+                decoder: "pocsag".to_string(),
+                elapsed_ms: 5000,
+                summary: "Test message".to_string(),
+                fields: BTreeMap::new(),
+            }],
             annotations: vec![],
         }
     }

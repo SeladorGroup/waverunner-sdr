@@ -179,8 +179,7 @@ fn ship_type_name(code: u8) -> &'static str {
 /// Each ASCII character (after adjustment) represents 6 bits of payload.
 /// Character values 0-39 map from ASCII 48-87 ('0'-'W'),
 /// values 40-63 map from ASCII 96-119 ('`'-'w').
-#[allow(dead_code)]
-fn decode_ais_payload(data: &[u8]) -> Vec<u8> {
+fn _decode_ais_payload(data: &[u8]) -> Vec<u8> {
     let mut bits = Vec::with_capacity(data.len() * 6);
     for &byte in data {
         let val = if byte >= 96 {
@@ -282,15 +281,20 @@ pub struct AisDecoder {
 impl AisDecoder {
     /// Create a new AIS decoder for the given channel frequency.
     pub fn new(sample_rate: f64, channel_freq: f64) -> Self {
+        let decoder_name = if (channel_freq - AIS_CHANNEL_A).abs() < 1e3 {
+            "ais-a"
+        } else {
+            "ais-b"
+        };
+
+        Self::named(sample_rate, channel_freq, decoder_name)
+    }
+
+    /// Create a new AIS decoder with an explicit runtime name.
+    pub fn named(sample_rate: f64, channel_freq: f64, decoder_name: impl Into<String>) -> Self {
         let sps = sample_rate / BAUD_RATE;
         let coeffs = gaussian_filter_coefficients(sps);
         let dc_alpha = 1.0 - (-1.0 / (0.001 * sample_rate)).exp();
-
-        let decoder_name = if (channel_freq - AIS_CHANNEL_A).abs() < 1e3 {
-            "ais-a".to_string()
-        } else {
-            "ais-b".to_string()
-        };
 
         Self {
             sample_rate,
@@ -303,7 +307,7 @@ impl AisDecoder {
             nrzi: NrziDecoder::new(),
             hdlc: HdlcDeframer::new(),
             vessels: HashMap::new(),
-            decoder_name,
+            decoder_name: decoder_name.into(),
         }
     }
 
@@ -368,9 +372,8 @@ impl AisDecoder {
 
         // Expire stale vessels
         let now = Instant::now();
-        self.vessels.retain(|_, v| {
-            now.duration_since(v.last_seen).as_secs() < VESSEL_EXPIRY_SECS
-        });
+        self.vessels
+            .retain(|_, v| now.duration_since(v.last_seen).as_secs() < VESSEL_EXPIRY_SECS);
 
         Some(DecodedMessage {
             decoder: self.decoder_name.clone(),
@@ -468,16 +471,11 @@ impl AisDecoder {
             },
         );
 
-        let name_str = name
-            .map(|n| format!(" ({})", n))
-            .unwrap_or_default();
+        let name_str = name.map(|n| format!(" ({})", n)).unwrap_or_default();
 
         match (latitude, longitude) {
             (Some(lat), Some(lon)) => {
-                format!(
-                    "AIS {:09}{} at {:.4},{:.4}",
-                    mmsi, name_str, lat, lon
-                )
+                format!("AIS {:09}{} at {:.4},{:.4}", mmsi, name_str, lat, lon)
             }
             _ => format!("AIS {:09}{} position report", mmsi, name_str),
         }
@@ -510,7 +508,10 @@ impl AisDecoder {
         if !name.is_empty() {
             fields.insert("name".to_string(), name.clone());
         }
-        fields.insert("ship_type".to_string(), ship_type_name(ship_type).to_string());
+        fields.insert(
+            "ship_type".to_string(),
+            ship_type_name(ship_type).to_string(),
+        );
         fields.insert("ship_type_code".to_string(), ship_type.to_string());
 
         let length = dim_bow + dim_stern;
@@ -534,7 +535,11 @@ impl AisDecoder {
         self.vessels.insert(
             mmsi,
             VesselInfo {
-                name: if name.is_empty() { None } else { Some(name.clone()) },
+                name: if name.is_empty() {
+                    None
+                } else {
+                    Some(name.clone())
+                },
                 last_seen: Instant::now(),
             },
         );
@@ -615,9 +620,7 @@ impl AisDecoder {
             },
         );
 
-        let name_str = name
-            .map(|n| format!(" ({})", n))
-            .unwrap_or_default();
+        let name_str = name.map(|n| format!(" ({})", n)).unwrap_or_default();
 
         match (latitude, longitude) {
             (Some(lat), Some(lon)) => {
@@ -638,7 +641,10 @@ impl AisDecoder {
         }
 
         let part = bits_to_uint(bits, 38, 2) as u8;
-        fields.insert("part".to_string(), if part == 0 { "A" } else { "B" }.to_string());
+        fields.insert(
+            "part".to_string(),
+            if part == 0 { "A" } else { "B" }.to_string(),
+        );
 
         if part == 0 {
             // Part A: name
@@ -658,7 +664,10 @@ impl AisDecoder {
             // Part B: ship type, dimensions, callsign
             let ship_type = bits_to_uint(bits, 40, 8) as u8;
             let callsign = bits_to_string(bits, 90, 7);
-            fields.insert("ship_type".to_string(), ship_type_name(ship_type).to_string());
+            fields.insert(
+                "ship_type".to_string(),
+                ship_type_name(ship_type).to_string(),
+            );
             if !callsign.is_empty() {
                 fields.insert("callsign".to_string(), callsign);
             }

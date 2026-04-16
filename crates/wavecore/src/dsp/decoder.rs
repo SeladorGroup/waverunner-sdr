@@ -18,12 +18,13 @@
 //! 3. The SessionManager handles thread spawning and channel management
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 
+use crate::dsp::ddc::Ddc;
 use crate::session::DecodedMessage;
 use crate::types::Sample;
 
@@ -131,12 +132,30 @@ impl DecoderHandle {
     /// `event_tx` is used by the decoder thread to send decoded messages
     /// back to the SessionManager's event channel.
     ///
+    /// If `ddc` is provided, wideband IQ samples are decimated to the decoder's
+    /// required sample rate before being passed to `decoder.process()`. This runs
+    /// on the decoder thread so it never blocks the realtime DSP path.
+    ///
     /// The bounded channel has capacity `buffer_depth`. If full, new
     /// samples are dropped (try_send) to prevent blocking.
     pub fn spawn(
+        decoder: Box<dyn DecoderPlugin>,
+        event_tx: Sender<DecodedMessage>,
+        buffer_depth: usize,
+    ) -> Self {
+        Self::spawn_with_ddc(decoder, event_tx, buffer_depth, None)
+    }
+
+    /// Spawn a decoder with an optional DDC (Digital Downconverter) chain.
+    ///
+    /// When `ddc` is `Some`, incoming wideband IQ is frequency-shifted and decimated
+    /// to the decoder's required sample rate before processing. This allows decoders
+    /// like POCSAG (22050 Hz) and AIS (48000 Hz) to work from a wideband 2+ MS/s stream.
+    pub fn spawn_with_ddc(
         mut decoder: Box<dyn DecoderPlugin>,
         event_tx: Sender<DecodedMessage>,
         buffer_depth: usize,
+        mut ddc: Option<Ddc>,
     ) -> Self {
         let (sample_tx, sample_rx): (Sender<Vec<Sample>>, Receiver<Vec<Sample>>) =
             crossbeam_channel::bounded(buffer_depth);
@@ -150,7 +169,13 @@ impl DecoderHandle {
                 while running_clone.load(Ordering::Relaxed) {
                     match sample_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                         Ok(samples) => {
-                            let messages = decoder.process(&samples);
+                            // Apply DDC if present: decimate wideband IQ to decoder's rate
+                            let processed = if let Some(ref mut ddc) = ddc {
+                                ddc.process(&samples)
+                            } else {
+                                samples
+                            };
+                            let messages = decoder.process(&processed);
                             for msg in messages {
                                 if event_tx.send(msg).is_err() {
                                     // Event channel closed, stop decoder
@@ -308,7 +333,9 @@ mod tests {
         let handle = DecoderHandle::spawn(decoder, msg_tx, 16);
 
         // Feed some samples
-        let samples: Vec<Sample> = (0..500).map(|i| Sample::new(i as f32 / 500.0, 0.0)).collect();
+        let samples: Vec<Sample> = (0..500)
+            .map(|i| Sample::new(i as f32 / 500.0, 0.0))
+            .collect();
         assert!(handle.feed(samples.clone()));
         assert!(handle.feed(samples));
 
@@ -330,7 +357,9 @@ mod tests {
         // Create a decoder that sleeps to simulate slow processing
         struct SlowDecoder;
         impl DecoderPlugin for SlowDecoder {
-            fn name(&self) -> &str { "slow" }
+            fn name(&self) -> &str {
+                "slow"
+            }
             fn requirements(&self) -> DecoderRequirements {
                 DecoderRequirements {
                     center_frequency: 100e6,

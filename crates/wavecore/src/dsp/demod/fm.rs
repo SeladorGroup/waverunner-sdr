@@ -2,12 +2,12 @@
 //!
 //! ## Quadrature Discriminator (Complex Conjugate Product)
 //!
-//! The instantaneous frequency of a complex signal z[n] is:
+//! The instantaneous frequency of a complex signal `z[n]` is:
 //!
-//!   f_inst[n] = fs/(2π) · arg(z[n] · z*[n−1])
+//!   `f_inst[n] = fs/(2π) · arg(z[n] · z*[n−1])`
 //!
 //! Expanding the complex product:
-//!   z[n]·z*[n−1] = (I[n]·I[n−1] + Q[n]·Q[n−1]) + j(Q[n]·I[n−1] − I[n]·Q[n−1])
+//!   `z[n]·z*[n−1] = (I[n]·I[n−1] + Q[n]·Q[n−1]) + j(Q[n]·I[n−1] − I[n]·Q[n−1])`
 //!
 //! The argument (atan2 of imaginary over real) gives the phase change per sample,
 //! which is proportional to the instantaneous frequency deviation. No explicit
@@ -116,10 +116,11 @@ impl FmDemod {
         let deviation_gain = match mode {
             FmMode::Narrow => 1.0, // NFM: unity, atan2 output is already audio-range
             FmMode::Wide | FmMode::WideStereo => {
-                // WFM: scale atan2 output. Max deviation ±75 kHz at fs.
-                // atan2 output is in [−π, π] for ±fs/2 deviation.
-                // So gain = 1.0 / (2π · 75000 / fs) to normalize
-                sample_rate / (2.0 * PI * 75000.0)
+                // WFM: scale atan2 output. Nominal max deviation ±75 kHz.
+                // Real FM broadcasts routinely exceed nominal deviation due to
+                // pre-emphasis and stereo multiplex, so use 2× headroom to
+                // prevent clipping before de-emphasis can attenuate.
+                sample_rate / (2.0 * PI * 75000.0 * 2.0)
             }
         };
 
@@ -162,12 +163,11 @@ impl FmDemod {
     /// Quadrature FM discriminator.
     ///
     /// Computes the instantaneous frequency from phase change:
-    ///   Δφ = arg(z[n] · z*[n−1]) = atan2(Q[n]I[n−1] − I[n]Q[n−1],
-    ///                                       I[n]I[n−1] + Q[n]Q[n−1])
+    ///   `Δφ = arg(z[n] · z*[n−1]) = atan2(Q[n]I[n−1] − I[n]Q[n−1], I[n]I[n−1] + Q[n]Q[n−1])`
     #[inline]
     fn discriminator(&self, current: Sample, previous: Sample) -> f32 {
         // z[n] · conj(z[n-1]):
-        let dot = current.re * previous.re + current.im * previous.im;   // Re
+        let dot = current.re * previous.re + current.im * previous.im; // Re
         let cross = current.im * previous.re - current.re * previous.im; // Im
         cross.atan2(dot)
     }
@@ -277,8 +277,7 @@ impl FmDemod {
         let mut audio = Vec::with_capacity(input.len());
 
         for &sample in input {
-            let demod = self.discriminator(sample, self.prev_sample) as f64
-                * self.deviation_gain;
+            let demod = self.discriminator(sample, self.prev_sample) as f64 * self.deviation_gain;
             let deemph = self.deemph.process_sample(demod as f32);
             let filtered = self.audio_lpf.process_sample(deemph);
             audio.push(filtered);
@@ -309,8 +308,8 @@ impl FmDemod {
 
         for &sample in input {
             // Step 1: FM discriminate
-            let composite = self.discriminator(sample, self.prev_sample) as f64
-                * self.deviation_gain;
+            let composite =
+                self.discriminator(sample, self.prev_sample) as f64 * self.deviation_gain;
             self.prev_sample = sample;
 
             // Step 2: Extract pilot tone (19 kHz)
@@ -403,8 +402,8 @@ mod tests {
     #[test]
     fn fm_demod_tone_modulation() {
         let fs = 48000.0;
-        let f_mod = 1000.0;   // 1 kHz modulating tone
-        let f_dev = 5000.0;   // ±5 kHz deviation (NFM)
+        let f_mod = 1000.0; // 1 kHz modulating tone
+        let f_dev = 5000.0; // ±5 kHz deviation (NFM)
 
         let mut demod = FmDemod::new(FmMode::Narrow, fs, 0.0);
 
@@ -454,7 +453,10 @@ mod tests {
         let rms: f32 = (audio[1000..].iter().map(|&x| x * x).sum::<f32>()
             / (audio.len() - 1000) as f32)
             .sqrt();
-        assert!(rms < 0.001, "Squelched output should be silent: rms = {rms:.6}");
+        assert!(
+            rms < 0.001,
+            "Squelched output should be silent: rms = {rms:.6}"
+        );
     }
 
     #[test]

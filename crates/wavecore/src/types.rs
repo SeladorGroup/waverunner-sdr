@@ -1,3 +1,5 @@
+//! Core type aliases and data structures for the SDR pipeline.
+
 use num_complex::Complex;
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +41,7 @@ pub struct DeviceInfo {
     pub available_gains: Vec<f64>,
 }
 
-/// Convert raw unsigned 8-bit RTL-SDR I/Q bytes to normalized Complex<f32>.
+/// Convert raw unsigned 8-bit RTL-SDR I/Q bytes to normalized `Complex<f32>`.
 ///
 /// RTL-SDR produces interleaved `[I0, Q0, I1, Q1, ...]` where each byte
 /// is unsigned 0-255 with 127.5 as the center point.

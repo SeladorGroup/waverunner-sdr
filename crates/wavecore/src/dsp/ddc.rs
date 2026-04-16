@@ -25,7 +25,7 @@
 //! 3. Optionally performs a second decimation stage
 
 use crate::dsp::filter_design::FirFilter;
-use crate::dsp::resample::{cic_compensation_fir, CicDecimator};
+use crate::dsp::resample::{CicDecimator, cic_compensation_fir};
 use crate::types::Sample;
 use std::f64::consts::PI;
 
@@ -69,10 +69,10 @@ impl SinLut {
         let frac = (phase & 0xFFFFF) as f32 / (1u32 << 20) as f32;
 
         let (idx, frac_adj, negate) = match quadrant {
-            0 => (index_bits as usize, frac, false),        // [0, π/2): sin ascending
-            1 => (index_bits as usize, frac, false),        // [π/2, π): sin descending = sin(π - θ)
-            2 => (index_bits as usize, frac, true),         // [π, 3π/2): −sin ascending
-            3 => (index_bits as usize, frac, true),         // [3π/2, 2π): −sin descending
+            0 => (index_bits as usize, frac, false), // [0, π/2): sin ascending
+            1 => (index_bits as usize, frac, false), // [π/2, π): sin descending = sin(π - θ)
+            2 => (index_bits as usize, frac, true),  // [π, 3π/2): −sin ascending
+            3 => (index_bits as usize, frac, true),  // [3π/2, 2π): −sin descending
             _ => unreachable!(),
         };
 
@@ -284,14 +284,20 @@ impl Ddc {
             let num_taps = (64 * fir_dec).min(511) | 1; // Odd, proportional to decimation
 
             // Start with CIC compensation kernel
-            let comp_coeffs = cic_compensation_fir(cic_dec, cic_stages, num_taps, passband_frac.min(0.9));
+            let comp_coeffs =
+                cic_compensation_fir(cic_dec, cic_stages, num_taps, passband_frac.min(0.9));
 
             Some(FirFilter::new(&comp_coeffs))
         } else if fir_dec > 1 {
             // No CIC, just a lowpass FIR for channel selection
-            let cutoff = bandwidth / (2.0 * input_rate); // Normalized to [0, Nyquist]
+            // cutoff = (bw/2) / (fs/2) = bw/fs, normalized to Nyquist
+            let cutoff = bandwidth / input_rate;
             let num_taps = (64 * fir_dec).min(511) | 1;
-            let coeffs = crate::dsp::filter_design::firwin_lowpass(cutoff, num_taps, &crate::dsp::windows::WindowType::BlackmanHarris4);
+            let coeffs = crate::dsp::filter_design::firwin_lowpass(
+                cutoff,
+                num_taps,
+                &crate::dsp::windows::WindowType::BlackmanHarris4,
+            );
             Some(FirFilter::new(&coeffs))
         } else {
             None
@@ -327,14 +333,16 @@ impl Ddc {
         // Step 3: FIR compensation/channel filter + optional decimation
         if let Some(ref mut fir) = self.comp_filter {
             if self.fir_decimation > 1 {
-                // Filter and decimate
+                // Polyphase-style decimation: feed delay line for non-output
+                // samples, only compute full FIR convolution on output samples.
                 let mut output = Vec::with_capacity(after_cic.len() / self.fir_decimation + 1);
                 for &sample in &after_cic {
-                    let filtered = fir.process_sample(sample);
                     self.fir_counter += 1;
                     if self.fir_counter >= self.fir_decimation {
                         self.fir_counter = 0;
-                        output.push(filtered);
+                        output.push(fir.process_sample(sample));
+                    } else {
+                        fir.push_sample(sample);
                     }
                 }
                 output
@@ -387,29 +395,32 @@ impl Ddc {
 
 /// Factor a total decimation into CIC × FIR stages.
 ///
-/// Strategy: CIC handles the largest power-of-2 factor that leaves a
-/// manageable FIR stage. CIC is not used for factors < 4 (overhead not
-/// worth it for small factors).
+/// For factors ≤ 16: FIR-only with polyphase decimation gives clean
+/// alias rejection. The polyphase approach only computes outputs that
+/// are kept, so CPU cost = (input_rate / M) × num_taps — practical
+/// for factors up to 16.
+///
+/// For factors > 16: CIC handles bulk decimation, FIR cleans up.
 fn factor_decimation(total: usize) -> (usize, usize) {
     if total <= 1 {
         return (1, 1);
     }
-    if total < 4 {
+    // FIR-only with polyphase for moderate factors (clean alias rejection)
+    if total <= 16 {
         return (1, total);
     }
 
-    // Find largest power of 2 ≤ total / 2, capped at 256
+    // For larger factors, split CIC × FIR.
+    // Always leave at least 2× for FIR anti-aliasing.
+    let max_cic = total / 2;
     let mut cic = 1;
-    while cic * 2 <= total && cic < 256 {
+    while cic * 2 <= max_cic && cic < 256 {
         cic *= 2;
     }
-
-    // Ensure fir_dec is at least 1
     let fir = total.div_ceil(cic);
     // Adjust CIC if FIR factor would be too large
     if fir > 16 {
-        // Increase CIC
-        let cic2 = total.div_ceil(16); // Minimum CIC to keep FIR ≤ 16
+        let cic2 = total.div_ceil(16);
         let cic2 = cic2.next_power_of_two().min(256);
         let fir2 = total.div_ceil(cic2);
         return (cic2, fir2.max(1));
@@ -570,10 +581,7 @@ mod tests {
         }
 
         let sfdr = 10.0 * (fundamental / max_spur.max(1e-20)).log10();
-        assert!(
-            sfdr > 55.0,
-            "NCO SFDR should be > 55 dB, got {sfdr:.1} dB"
-        );
+        assert!(sfdr > 55.0, "NCO SFDR should be > 55 dB, got {sfdr:.1} dB");
     }
 
     #[test]

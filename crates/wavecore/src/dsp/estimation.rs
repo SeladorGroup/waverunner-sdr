@@ -22,7 +22,7 @@ pub struct FrequencyEstimate {
 ///
 /// δ = 0.5 · (α - γ) / (α - 2β + γ)
 ///
-/// where α = S[k-1], β = S[k], γ = S[k+1] in dB.
+/// where `α = S[k-1]`, `β = S[k]`, `γ = S[k+1]` in dB.
 ///
 /// Bias: ≤ 0.06 bins for Hann window, worse for rectangular.
 /// Variance: ~0.04 bins² at 20 dB SNR.
@@ -48,7 +48,7 @@ pub fn parabolic_interpolation(spectrum_db: &[f32], peak_bin: usize) -> f64 {
 /// Uses the complex FFT output (not magnitude) for better accuracy.
 /// Based on the ratio of neighboring DFT bins:
 ///
-/// τ₁ = Re(X[k-1]/X[k]),  τ₂ = Re(X[k+1]/X[k])
+/// `τ₁ = Re(X[k-1]/X[k])`,  `τ₂ = Re(X[k+1]/X[k])`
 /// δ₁ = τ₁/(1-τ₁),  δ₂ = -τ₂/(1-τ₂)
 ///
 /// If δ₁ > 0 and δ₂ > 0: δ = δ₂
@@ -103,7 +103,7 @@ fn quinn_tau(x: f64) -> f64 {
 ///
 /// A simpler alternative to Quinn's, with comparable accuracy for Hann windows:
 ///
-/// δ = Re((X[k-1] - X[k+1]) / (2X[k] - X[k-1] - X[k+1]))
+/// `δ = Re((X[k-1] - X[k+1]) / (2X[k] - X[k-1] - X[k+1]))`
 ///
 /// Single formula, no branching, efficient.
 /// Bias: <0.02 bins for Hann window.
@@ -131,9 +131,9 @@ pub fn jacobsen_estimator(fft_output: &[Sample], peak_bin: usize) -> f64 {
 /// Operates directly on time-domain samples (not FFT).
 /// Estimates the frequency from the phase differences between consecutive samples.
 ///
-/// f̂ = (1/(2π)) · Σ w[n] · arg(x[n] · x*[n-1])
+/// `f̂ = (1/(2π)) · Σ w[n] · arg(x[n] · x*[n-1])`
 ///
-/// with optimal weights w[n] = 6n(N-n) / (N(N²-1)) that minimize variance.
+/// with optimal weights `w[n] = 6n(N-n) / (N(N²-1))` that minimize variance.
 ///
 /// The estimator is unbiased and achieves the Cramér-Rao bound for high SNR
 /// when the signal is a single complex sinusoid in white Gaussian noise.
@@ -167,9 +167,9 @@ pub fn kay_frequency_estimator(samples: &[Sample]) -> f64 {
 /// Extension of Kay's estimator using multiple lags for improved accuracy
 /// at lower SNR. Uses the autocorrelation at lags 1 through M:
 ///
-/// f̂ = (1/π) · Σ_{m=1}^{M} w[m] · arg(R[m])
+/// `f̂ = (1/π) · Σ_{m=1}^{M} w[m] · arg(R[m])`
 ///
-/// where R[m] = (1/(N-m)) · Σ_{n=m}^{N-1} x[n]·x*[n-m]
+/// where `R[m] = (1/(N-m)) · Σ_{n=m}^{N-1} x[n]·x*[n-m]`
 ///
 /// The maximum lag M = ⌊(N-1)/2⌋ balances bias and variance.
 ///
@@ -248,8 +248,8 @@ pub fn frequency_crlb(num_samples: usize, snr_db: f32) -> f64 {
 /// without requiring knowledge of the noise variance or signal type.
 ///
 /// For a constant-modulus signal (PSK, FM) in Gaussian noise:
-///   M₂ = E[|x|²] = S + σ²
-///   M₄ = E[|x|⁴] = S² + 4Sσ² + 2σ⁴   (for complex Gaussian noise)
+///   `M₂ = E[|x|²] = S + σ²`
+///   `M₄ = E[|x|⁴] = S² + 4Sσ² + 2σ⁴`   (for complex Gaussian noise)
 ///
 /// Solving: σ² = √(2M₂² - M₄), S = M₂ - σ²
 ///   SNR = S/σ² = (M₂ - √(2M₂² - M₄)) / √(2M₂² - M₄)

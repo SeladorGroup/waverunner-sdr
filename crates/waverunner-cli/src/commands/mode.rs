@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -112,8 +112,7 @@ fn run_list() -> Result<()> {
 }
 
 async fn run_general(args: GeneralScanArgs, device_index: u32) -> Result<()> {
-    let gain_mode =
-        wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
@@ -199,11 +198,11 @@ async fn run_profile(args: RunProfileArgs, device_index: u32) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Unknown profile: {}", args.name))?
         .clone();
 
-    let gain_str = args.gain.as_deref().unwrap_or(
-        profile.gain.as_deref().unwrap_or("auto"),
-    );
-    let gain_mode =
-        wavecore::util::parse_gain(gain_str).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_str = args
+        .gain
+        .as_deref()
+        .unwrap_or(profile.gain.as_deref().unwrap_or("auto"));
+    let gain_mode = wavecore::util::parse_gain(gain_str).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let frequency = profile
         .frequencies
@@ -273,11 +272,7 @@ fn run_mode_loop(
         while let Ok(event) = events.try_recv() {
             // Print decoded messages
             if let Event::DecodedMessage(ref msg) = event {
-                println!(
-                    "[{}] {}",
-                    msg.decoder.to_uppercase(),
-                    msg.summary,
-                );
+                println!("[{}] {}", msg.decoder.to_uppercase(), msg.summary,);
                 for (key, value) in &msg.fields {
                     println!("  {:>16}: {}", key, value);
                 }

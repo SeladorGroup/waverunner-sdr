@@ -3,10 +3,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use num_complex::Complex;
 
-use wavecore::dsp::detection::{CfarConfig, cfar_detect};
+use wavecore::dsp::demod::Demodulator;
 use wavecore::dsp::demod::am::{AmDemod, AmMode};
 use wavecore::dsp::demod::fm::{FmDemod, FmMode};
-use wavecore::dsp::demod::Demodulator;
+use wavecore::dsp::detection::{CfarConfig, cfar_detect};
 use wavecore::dsp::fft::SpectrumAnalyzer;
 use wavecore::dsp::filter_design::FirFilter;
 use wavecore::dsp::preprocess::DcRemover;
@@ -117,14 +117,10 @@ fn bench_fir_filter(c: &mut Criterion) {
             .collect();
 
         group.throughput(Throughput::Elements(4096));
-        group.bench_with_input(
-            BenchmarkId::new("taps", num_taps),
-            &coeffs,
-            |b, coeffs| {
-                let mut filter = FirFilter::new(coeffs);
-                b.iter(|| filter.process_block(&signal));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("taps", num_taps), &coeffs, |b, coeffs| {
+            let mut filter = FirFilter::new(coeffs);
+            b.iter(|| filter.process_block(&signal));
+        });
     }
     group.finish();
 }

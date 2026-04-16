@@ -8,7 +8,7 @@
 //! | File              | Contents                                    |
 //! |-------------------|---------------------------------------------|
 //! | `name.sigmf-data` | Raw interleaved cf32_le binary samples       |
-//! | `name.sigmf-meta` | JSON: global, captures[], annotations[]      |
+//! | `name.sigmf-meta` | JSON: global, `captures[]`, `annotations[]`  |
 //!
 //! ## Usage
 //!
@@ -23,7 +23,7 @@
 //!
 //! Always writes `cf32_le` — interleaved little-endian 32-bit float
 //! complex pairs. This is the most widely supported SigMF format and
-//! matches our internal `Sample` type (Complex<f32>).
+//! matches our internal `Sample` type (`Complex<f32>`).
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -125,11 +125,17 @@ pub struct SigMfAnnotation {
     pub sample_count: u64,
 
     /// Center frequency of the annotated signal in Hz.
-    #[serde(rename = "core:freq_lower_edge", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "core:freq_lower_edge",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub freq_lower_edge: Option<f64>,
 
     /// Upper frequency edge in Hz.
-    #[serde(rename = "core:freq_upper_edge", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "core:freq_upper_edge",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub freq_upper_edge: Option<f64>,
 
     /// Human-readable label for this annotation.
@@ -229,12 +235,7 @@ impl SigMfWriter {
     }
 
     /// Add an annotation marking a region of interest.
-    pub fn add_annotation(
-        &mut self,
-        sample_start: u64,
-        sample_count: u64,
-        label: &str,
-    ) {
+    pub fn add_annotation(&mut self, sample_start: u64, sample_count: u64, label: &str) {
         self.meta.annotations.push(SigMfAnnotation {
             sample_start,
             sample_count,
@@ -383,7 +384,10 @@ mod tests {
         // Read back binary data
         let data_path = base.with_extension("sigmf-data");
         let mut data = Vec::new();
-        File::open(&data_path).unwrap().read_to_end(&mut data).unwrap();
+        File::open(&data_path)
+            .unwrap()
+            .read_to_end(&mut data)
+            .unwrap();
         assert_eq!(data.len(), 3 * 8); // 3 samples × 2 floats × 4 bytes
 
         // Verify sample values

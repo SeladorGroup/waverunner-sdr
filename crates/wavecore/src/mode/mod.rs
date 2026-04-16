@@ -58,8 +58,7 @@ impl ModeController {
         if let Some(config_dir) = crate::util::config_dir() {
             let user_dir = config_dir.join("profiles");
             if user_dir.is_dir() {
-                self.profiles
-                    .extend(profile::load_user_profiles(&user_dir));
+                self.profiles.extend(profile::load_user_profiles(&user_dir));
             }
         }
     }
@@ -128,9 +127,8 @@ impl ModeController {
 
     /// Create a ProfileMode from a named profile.
     pub fn create_profile_mode(&self, name: &str) -> Option<Box<dyn Mode>> {
-        self.get_profile(name).map(|p| {
-            Box::new(profile::ProfileMode::new(p.clone())) as Box<dyn Mode>
-        })
+        self.get_profile(name)
+            .map(|p| Box::new(profile::ProfileMode::new(p.clone())) as Box<dyn Mode>)
     }
 
     /// Create a ProfileMode with an optional gain override (e.g. from CLI --gain).
@@ -140,8 +138,10 @@ impl ModeController {
         gain_override: Option<GainMode>,
     ) -> Option<Box<dyn Mode>> {
         self.get_profile(name).map(|p| {
-            Box::new(profile::ProfileMode::with_gain_override(p.clone(), gain_override))
-                as Box<dyn Mode>
+            Box::new(profile::ProfileMode::with_gain_override(
+                p.clone(),
+                gain_override,
+            )) as Box<dyn Mode>
         })
     }
 }

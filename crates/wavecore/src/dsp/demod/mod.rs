@@ -104,14 +104,14 @@ pub fn mode_defaults(mode: &str) -> Option<DemodModeDefaults> {
         }),
         "wfm" => Some(DemodModeDefaults {
             channel_bw: 200_000.0,
-            sample_rate: 2_048_000.0,
-            ddc_output_rate: 256_000.0,
+            sample_rate: 1_024_000.0,
+            ddc_output_rate: 128_000.0,
             deemph_us: 75.0,
         }),
         "wfm-stereo" => Some(DemodModeDefaults {
             channel_bw: 200_000.0,
-            sample_rate: 2_048_000.0,
-            ddc_output_rate: 256_000.0,
+            sample_rate: 1_024_000.0,
+            ddc_output_rate: 128_000.0,
             deemph_us: 75.0,
         }),
         "usb" | "lsb" => Some(DemodModeDefaults {
@@ -127,5 +127,21 @@ pub fn mode_defaults(mode: &str) -> Option<DemodModeDefaults> {
             deemph_us: 0.0,
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mode_defaults;
+
+    #[test]
+    fn wfm_defaults_use_reduced_live_sample_rate() {
+        let mono = mode_defaults("wfm").unwrap();
+        let stereo = mode_defaults("wfm-stereo").unwrap();
+
+        assert_eq!(mono.sample_rate, 1_024_000.0);
+        assert_eq!(stereo.sample_rate, 1_024_000.0);
+        assert_eq!(mono.ddc_output_rate, 128_000.0);
+        assert_eq!(stereo.ddc_output_rate, 128_000.0);
     }
 }

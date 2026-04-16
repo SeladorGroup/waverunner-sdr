@@ -53,7 +53,7 @@ fn dirs_path() -> PathBuf {
     } else if let Some(home) = std::env::var_os("HOME") {
         PathBuf::from(home).join(".cache").join("waverunner")
     } else {
-        PathBuf::from("/tmp/waverunner")
+        std::env::temp_dir().join("waverunner")
     }
 }
 
@@ -66,14 +66,12 @@ pub fn save_checkpoint(cp: &SessionCheckpoint) -> Result<(), String> {
     }
 
     let tmp_path = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(cp)
-        .map_err(|e| format!("Checkpoint serialize error: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(cp).map_err(|e| format!("Checkpoint serialize error: {e}"))?;
 
-    std::fs::write(&tmp_path, &json)
-        .map_err(|e| format!("Checkpoint write error: {e}"))?;
+    std::fs::write(&tmp_path, &json).map_err(|e| format!("Checkpoint write error: {e}"))?;
 
-    std::fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Checkpoint rename error: {e}"))?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Checkpoint rename error: {e}"))?;
 
     Ok(())
 }

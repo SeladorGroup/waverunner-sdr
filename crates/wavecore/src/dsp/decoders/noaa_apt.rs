@@ -356,8 +356,14 @@ impl NoaaAptDecoder {
         let mut fields = BTreeMap::new();
         fields.insert("satellite".to_string(), self.satellite.clone());
         fields.insert("line_number".to_string(), self.line_count.to_string());
-        fields.insert("sync_a_quality".to_string(), format!("{:.2}", sync_a_quality));
-        fields.insert("sync_b_quality".to_string(), format!("{:.2}", sync_b_quality));
+        fields.insert(
+            "sync_a_quality".to_string(),
+            format!("{:.2}", sync_a_quality),
+        );
+        fields.insert(
+            "sync_b_quality".to_string(),
+            format!("{:.2}", sync_b_quality),
+        );
         fields.insert("image_width".to_string(), IMAGE_A_WIDTH.to_string());
         fields.insert("channel_a".to_string(), "Visible".to_string());
         fields.insert("channel_b".to_string(), "Infrared".to_string());
@@ -569,7 +575,11 @@ mod tests {
         // May or may not be None depending on spectral similarity,
         // but should be much weaker than a match
         if let Some(corr) = result {
-            assert!(corr < 0.8, "Wrong tone should have low correlation: {}", corr);
+            assert!(
+                corr < 0.8,
+                "Wrong tone should have low correlation: {}",
+                corr
+            );
         }
     }
 
@@ -613,7 +623,11 @@ mod tests {
             }
         }
 
-        assert!(power > 0.1, "Bandpass should pass 2400 Hz tone: power={}", power);
+        assert!(
+            power > 0.1,
+            "Bandpass should pass 2400 Hz tone: power={}",
+            power
+        );
     }
 
     #[test]
@@ -635,7 +649,11 @@ mod tests {
         }
 
         // Should have much less power than passband (wide BPF allows some leakage)
-        assert!(power < 0.1, "Bandpass should attenuate 100 Hz: power={}", power);
+        assert!(
+            power < 0.1,
+            "Bandpass should attenuate 100 Hz: power={}",
+            power
+        );
     }
 
     // ------------------------------------------------------------------
@@ -651,7 +669,11 @@ mod tests {
 
         // Add sync A tone (1040 Hz) at the start
         let samples_per_cycle_a = (APT_SAMPLE_RATE / SYNC_A_FREQ) as usize;
-        for (i, val) in line.iter_mut().take(samples_per_cycle_a * SYNC_CYCLES).enumerate() {
+        for (i, val) in line
+            .iter_mut()
+            .take(samples_per_cycle_a * SYNC_CYCLES)
+            .enumerate()
+        {
             let t = i as f64 / APT_SAMPLE_RATE;
             if i < SYNC_WIDTH {
                 *val = (2.0 * PI * SYNC_A_FREQ * t).sin() as f32;

@@ -73,7 +73,11 @@ pub fn compare_spectra(config: &CompareConfig) -> ComparisonReport {
     let (peak_bin, peak_diff) = diff_db
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.abs().partial_cmp(&b.abs()).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|(_, a), (_, b)| {
+            a.abs()
+                .partial_cmp(&b.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(i, &v)| (i, v.abs()))
         .unwrap_or((0, 0.0));
 
@@ -181,7 +185,12 @@ mod tests {
             threshold_db: 6.0,
         });
         assert!(!report.new_signals.is_empty(), "Should detect new signal");
-        assert!(report.new_signals.iter().any(|(bin, _)| *bin >= 495 && *bin < 505));
+        assert!(
+            report
+                .new_signals
+                .iter()
+                .any(|(bin, _)| *bin >= 495 && *bin < 505)
+        );
     }
 
     #[test]
@@ -210,7 +219,11 @@ mod tests {
             sample_rate: 2.048e6,
             threshold_db: 6.0,
         });
-        assert!((report.rms_diff_db - 10.0).abs() < 0.01, "RMS diff should be 10 dB, got {}", report.rms_diff_db);
+        assert!(
+            (report.rms_diff_db - 10.0).abs() < 0.01,
+            "RMS diff should be 10 dB, got {}",
+            report.rms_diff_db
+        );
     }
 
     #[test]
@@ -223,6 +236,10 @@ mod tests {
             sample_rate: 2.048e6,
             threshold_db: 100.0, // high threshold so no new/lost signals
         });
-        assert!(report.correlation < -0.9, "Anti-correlated should be negative, got {}", report.correlation);
+        assert!(
+            report.correlation < -0.9,
+            "Anti-correlated should be negative, got {}",
+            report.correlation
+        );
     }
 }

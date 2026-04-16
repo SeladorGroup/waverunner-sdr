@@ -1,3 +1,5 @@
+//! Digital signal processing modules: FFT, filtering, detection, demodulation, and decoders.
+
 pub mod agc;
 pub mod convert;
 pub mod ddc;

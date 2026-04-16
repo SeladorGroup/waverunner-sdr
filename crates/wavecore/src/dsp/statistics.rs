@@ -90,7 +90,7 @@ pub fn signal_statistics(samples: &[Sample]) -> SignalStats {
     }
 }
 
-/// Autocorrelation function R[τ] = E[x[n] · x*[n-τ]].
+/// Autocorrelation function `R[τ] = E[x[n] · x*[n-τ]]`.
 ///
 /// Computes the biased autocorrelation (normalized by N, not N-τ)
 /// which is guaranteed to produce a positive semi-definite sequence.
@@ -113,7 +113,7 @@ pub fn autocorrelation(samples: &[Sample], max_lag: usize) -> Vec<Sample> {
 
 /// Spectral entropy (Shannon entropy of normalized power spectrum).
 ///
-/// H = -Σ p[k] · log₂(p[k])  where p[k] = S[k] / Σ S[k]
+/// `H = -Σ p[k] · log₂(p[k])` where `p[k] = S[k] / Σ S[k]`
 ///
 /// Range: 0 (pure tone, all energy in 1 bin) to log₂(N) (white noise).
 ///

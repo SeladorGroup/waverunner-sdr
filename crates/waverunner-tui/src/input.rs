@@ -103,59 +103,57 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 _ => Action::None,
             }
         }
-        InputMode::Normal => {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
-                KeyCode::Char('j') | KeyCode::Up => Action::TuneUp,
-                KeyCode::Char('k') | KeyCode::Down => Action::TuneDown,
-                KeyCode::Char('h') | KeyCode::Left => Action::StepDecrease,
-                KeyCode::Char('l') | KeyCode::Right => Action::StepIncrease,
-                KeyCode::Char('m') => Action::CycleDemod,
-                KeyCode::Char('M') => Action::CycleDemodBack,
-                KeyCode::Char('d') => Action::CycleDecoder,
-                KeyCode::Char('D') => Action::CycleDecoderBack,
-                KeyCode::Char('p') => Action::CycleMode,
-                KeyCode::Char('P') => Action::CycleModeBack,
-                KeyCode::Char('g') => Action::ToggleGeneralScan,
-                KeyCode::Char('f') => {
-                    app.input_mode = InputMode::FrequencyEntry(String::new());
-                    Action::FrequencyEntry
-                }
-                KeyCode::Char('s') => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        Action::SquelchUp
-                    } else {
-                        Action::ToggleSquelch
-                    }
-                }
-                KeyCode::Char('S') => Action::SquelchUp,
-                KeyCode::Char('+') | KeyCode::Char('=') => Action::SquelchUp,
-                KeyCode::Char('-') => Action::SquelchDown,
-                KeyCode::Tab => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        Action::CycleViewTabBack
-                    } else {
-                        Action::CycleViewTab
-                    }
-                }
-                KeyCode::BackTab => Action::CycleViewTabBack,
-                KeyCode::Char('`') => Action::CycleViewTabBack,
-                KeyCode::Char('a') => Action::RunMeasurement,
-                KeyCode::Char('A') => Action::ToggleTracking,
-                KeyCode::Char('r') => Action::CaptureReference,
-                KeyCode::Char('c') => Action::CompareReference,
-                KeyCode::Char('x') => Action::ExportCsv,
-                KeyCode::Char('b') => Action::AddBookmark,
-                KeyCode::Char('R') => Action::ExportReport,
-                KeyCode::Char(']') => Action::VolumeUp,
-                KeyCode::Char('[') => Action::VolumeDown,
-                KeyCode::Char('\\') => Action::VolumeMute,
-                KeyCode::Char('B') => Action::SaveBookmark,
-                KeyCode::Char('i') => Action::IdentifySignal,
-                KeyCode::Char('X') => Action::ExportPng,
-                _ => Action::None,
+        InputMode::Normal => match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
+            KeyCode::Char('j') | KeyCode::Up => Action::TuneUp,
+            KeyCode::Char('k') | KeyCode::Down => Action::TuneDown,
+            KeyCode::Char('h') | KeyCode::Left => Action::StepDecrease,
+            KeyCode::Char('l') | KeyCode::Right => Action::StepIncrease,
+            KeyCode::Char('m') => Action::CycleDemod,
+            KeyCode::Char('M') => Action::CycleDemodBack,
+            KeyCode::Char('d') => Action::CycleDecoder,
+            KeyCode::Char('D') => Action::CycleDecoderBack,
+            KeyCode::Char('p') => Action::CycleMode,
+            KeyCode::Char('P') => Action::CycleModeBack,
+            KeyCode::Char('g') => Action::ToggleGeneralScan,
+            KeyCode::Char('f') => {
+                app.input_mode = InputMode::FrequencyEntry(String::new());
+                Action::FrequencyEntry
             }
-        }
+            KeyCode::Char('s') => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    Action::SquelchUp
+                } else {
+                    Action::ToggleSquelch
+                }
+            }
+            KeyCode::Char('S') => Action::SquelchUp,
+            KeyCode::Char('+') | KeyCode::Char('=') => Action::SquelchUp,
+            KeyCode::Char('-') => Action::SquelchDown,
+            KeyCode::Tab => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    Action::CycleViewTabBack
+                } else {
+                    Action::CycleViewTab
+                }
+            }
+            KeyCode::BackTab => Action::CycleViewTabBack,
+            KeyCode::Char('`') => Action::CycleViewTabBack,
+            KeyCode::Char('a') => Action::RunMeasurement,
+            KeyCode::Char('A') => Action::ToggleTracking,
+            KeyCode::Char('r') => Action::CaptureReference,
+            KeyCode::Char('c') => Action::CompareReference,
+            KeyCode::Char('x') => Action::ExportCsv,
+            KeyCode::Char('b') => Action::AddBookmark,
+            KeyCode::Char('R') => Action::ExportReport,
+            KeyCode::Char(']') => Action::VolumeUp,
+            KeyCode::Char('[') => Action::VolumeDown,
+            KeyCode::Char('\\') => Action::VolumeMute,
+            KeyCode::Char('B') => Action::SaveBookmark,
+            KeyCode::Char('i') => Action::IdentifySignal,
+            KeyCode::Char('X') => Action::ExportPng,
+            _ => Action::None,
+        },
     }
 }
 

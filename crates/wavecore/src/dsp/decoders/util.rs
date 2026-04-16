@@ -259,7 +259,7 @@ pub fn crc16_check(frame_with_crc: &[u8]) -> bool {
 /// Generalized from the POCSAG decoder's clock recovery. Tracks the
 /// optimal sampling instant for binary data using the Gardner TED:
 ///
-///   e[n] = x_mid · (x_cur − x_prev)
+///   `e[n] = x_mid · (x_cur − x_prev)`
 ///
 /// The PI loop filter adjusts the sample phase to minimize timing error.
 pub struct ClockRecovery {
@@ -320,8 +320,7 @@ impl ClockRecovery {
 
         if self.phase <= 0.0 {
             // Symbol strobe — compute Gardner TED error
-            let error =
-                self.mid_sample as f64 * (sample as f64 - self.prev_sample as f64);
+            let error = self.mid_sample as f64 * (sample as f64 - self.prev_sample as f64);
 
             // PI loop filter
             self.integrator += self.ki * error;
@@ -352,9 +351,12 @@ impl ClockRecovery {
 /// FM quadrature discriminator.
 ///
 /// Computes instantaneous frequency from consecutive IQ samples:
-///   Δφ = atan2(Q[n]·I[n−1] − I[n]·Q[n−1], I[n]·I[n−1] + Q[n]·Q[n−1])
+///   `Δφ = atan2(Q[n]·I[n−1] − I[n]·Q[n−1], I[n]·I[n−1] + Q[n]·Q[n−1])`
 #[inline]
-pub fn fm_discriminate(current: num_complex::Complex<f32>, previous: num_complex::Complex<f32>) -> f32 {
+pub fn fm_discriminate(
+    current: num_complex::Complex<f32>,
+    previous: num_complex::Complex<f32>,
+) -> f32 {
     let dot = current.re * previous.re + current.im * previous.im;
     let cross = current.im * previous.re - current.re * previous.im;
     cross.atan2(dot)
@@ -531,7 +533,11 @@ mod tests {
         // Standard test: CRC of "123456789" should be 0x906E
         let data = b"123456789";
         let crc = crc16_ccitt(data);
-        assert_eq!(crc, 0x906E, "CRC-16-CCITT of '123456789' should be 0x906E, got 0x{:04X}", crc);
+        assert_eq!(
+            crc, 0x906E,
+            "CRC-16-CCITT of '123456789' should be 0x906E, got 0x{:04X}",
+            crc
+        );
     }
 
     #[test]
@@ -560,7 +566,10 @@ mod tests {
         frame.push(0x00);
         frame.push(0x00);
 
-        assert!(!crc16_check(&frame), "CRC check should fail for invalid frame");
+        assert!(
+            !crc16_check(&frame),
+            "CRC check should fail for invalid frame"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -619,8 +628,10 @@ mod tests {
             for (i, &d) in late.iter().enumerate() {
                 let expected_sign = pattern[pattern.len() - 4 + i];
                 assert_eq!(
-                    d > 0.0, expected_sign > 0.0,
-                    "Decision {} should match pattern sign", i
+                    d > 0.0,
+                    expected_sign > 0.0,
+                    "Decision {} should match pattern sign",
+                    i
                 );
             }
         }

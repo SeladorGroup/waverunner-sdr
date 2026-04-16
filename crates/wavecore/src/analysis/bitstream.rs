@@ -158,7 +158,10 @@ pub fn bit_autocorrelation(bits: &[u8], max_lag: usize) -> Vec<usize> {
     let n = bits.len();
 
     // Convert bits to ±1 for correlation
-    let signal: Vec<f32> = bits.iter().map(|&b| if b != 0 { 1.0 } else { -1.0 }).collect();
+    let signal: Vec<f32> = bits
+        .iter()
+        .map(|&b| if b != 0 { 1.0 } else { -1.0 })
+        .collect();
 
     // Compute normalized autocorrelation
     let r0: f32 = signal.iter().map(|s| s * s).sum();
@@ -182,10 +185,7 @@ pub fn bit_autocorrelation(bits: &[u8], max_lag: usize) -> Vec<usize> {
 
     for i in 1..correlations.len().saturating_sub(1) {
         let (lag, val) = correlations[i];
-        if val > threshold
-            && val > correlations[i - 1].1
-            && val > correlations[i + 1].1
-        {
+        if val > threshold && val > correlations[i - 1].1 && val > correlations[i + 1].1 {
             peaks.push(lag);
         }
     }
@@ -203,7 +203,8 @@ fn run_length_analysis(bits: &[u8]) -> (usize, Vec<(usize, usize)>) {
 
     let mut max_run = 1usize;
     let mut current_run = 1usize;
-    let mut run_counts: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    let mut run_counts: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
 
     for i in 1..bits.len() {
         if (bits[i] != 0) == (bits[i - 1] != 0) {
@@ -298,7 +299,8 @@ fn guess_encoding(bits: &[u8], run_dist: &[(usize, usize)]) -> Option<String> {
 
     // Manchester: runs should cluster around 1T and 2T (where T = symbol period)
     // Look for bimodal distribution at lengths N and 2N
-    let dominant_runs: Vec<&(usize, usize)> = run_dist.iter().filter(|(_, count)| *count > 5).collect();
+    let dominant_runs: Vec<&(usize, usize)> =
+        run_dist.iter().filter(|(_, count)| *count > 5).collect();
 
     if dominant_runs.len() == 2 {
         let (l1, _) = dominant_runs[0];
@@ -310,7 +312,10 @@ fn guess_encoding(bits: &[u8], run_dist: &[(usize, usize)]) -> Option<String> {
     }
 
     // NRZI: look at transition density
-    let transitions = bits.windows(2).filter(|w| (w[0] != 0) != (w[1] != 0)).count();
+    let transitions = bits
+        .windows(2)
+        .filter(|w| (w[0] != 0) != (w[1] != 0))
+        .count();
     let transition_density = transitions as f64 / (bits.len() - 1).max(1) as f64;
 
     // NRZI with bit stuffing: transition density ~40-60%

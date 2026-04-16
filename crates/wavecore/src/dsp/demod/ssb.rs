@@ -16,8 +16,8 @@
 //! ## Phasing Method
 //!
 //! Uses a Hilbert transform to generate the analytic signal:
-//!   USB: y[n] = I[n]·cos(ω₀n) + Î[n]·sin(ω₀n)
-//!   LSB: y[n] = I[n]·cos(ω₀n) − Î[n]·sin(ω₀n)
+//!   USB: `y[n] = I[n]·cos(ω₀n) + Î[n]·sin(ω₀n)`
+//!   LSB: `y[n] = I[n]·cos(ω₀n) − Î[n]·sin(ω₀n)`
 //!
 //! where Î is the Hilbert transform (90° phase shift) of I.
 //! Simpler conceptually but requires a wideband Hilbert filter.
@@ -228,10 +228,12 @@ mod tests {
         assert_eq!(audio.len(), n);
 
         // Output should have audio energy
-        let rms: f32 = (audio[2000..].iter().map(|&x| x * x).sum::<f32>()
-            / (n - 2000) as f32)
-            .sqrt();
-        assert!(rms > 0.01, "USB should demodulate upper tone: rms = {rms:.4}");
+        let rms: f32 =
+            (audio[2000..].iter().map(|&x| x * x).sum::<f32>() / (n - 2000) as f32).sqrt();
+        assert!(
+            rms > 0.01,
+            "USB should demodulate upper tone: rms = {rms:.4}"
+        );
     }
 
     #[test]
@@ -251,10 +253,12 @@ mod tests {
 
         let audio = demod.process(&input);
 
-        let rms: f32 = (audio[2000..].iter().map(|&x| x * x).sum::<f32>()
-            / (n - 2000) as f32)
-            .sqrt();
-        assert!(rms > 0.01, "LSB should demodulate lower tone: rms = {rms:.4}");
+        let rms: f32 =
+            (audio[2000..].iter().map(|&x| x * x).sum::<f32>() / (n - 2000) as f32).sqrt();
+        assert!(
+            rms > 0.01,
+            "LSB should demodulate lower tone: rms = {rms:.4}"
+        );
     }
 
     #[test]
@@ -285,12 +289,10 @@ mod tests {
 
         let audio_pass = demod.process(&input_pass);
 
-        let rms_reject: f32 = (audio_reject[2000..].iter().map(|&x| x * x).sum::<f32>()
-            / (n - 2000) as f32)
-            .sqrt();
-        let rms_pass: f32 = (audio_pass[2000..].iter().map(|&x| x * x).sum::<f32>()
-            / (n - 2000) as f32)
-            .sqrt();
+        let rms_reject: f32 =
+            (audio_reject[2000..].iter().map(|&x| x * x).sum::<f32>() / (n - 2000) as f32).sqrt();
+        let rms_pass: f32 =
+            (audio_pass[2000..].iter().map(|&x| x * x).sum::<f32>() / (n - 2000) as f32).sqrt();
 
         assert!(
             rms_pass > rms_reject * 3.0,

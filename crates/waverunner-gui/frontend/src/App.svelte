@@ -76,6 +76,7 @@
       const config: DemodConfig = {
         mode, audio_rate: 48000,
         bandwidth: null, bfo: null, squelch: null, deemph_us: null, output_wav: null,
+        emit_visualization: true, spectrum_update_interval_blocks: 1,
       };
       cmdStartDemod(config);
     }

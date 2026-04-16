@@ -1,3 +1,5 @@
+//! Hardware abstraction traits for SDR device control and streaming.
+
 use crate::error::HardwareError;
 use crate::types::{DeviceInfo, Frequency, Sample, SampleRate};
 
@@ -46,7 +48,7 @@ pub trait SdrDevice: Send + Sync {
     fn set_ppm(&self, ppm: i32) -> Result<(), HardwareError>;
 
     /// Start receiving samples. The callback is called with each buffer
-    /// of IQ samples (already converted to Complex<f32>).
+    /// of IQ samples (already converted to `Complex<f32>`).
     ///
     /// This method **blocks** the calling thread until `stop_rx()` is called
     /// from another thread or an error occurs. Typically called from a

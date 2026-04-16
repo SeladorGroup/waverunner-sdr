@@ -9,7 +9,7 @@
 
 use std::f64::consts::PI;
 
-use crate::dsp::windows::{generate_window, kaiser_design, WindowType};
+use crate::dsp::windows::{WindowType, generate_window, kaiser_design};
 use crate::types::Sample;
 
 // ============================================================================
@@ -107,12 +107,7 @@ pub fn firwin_highpass(cutoff: f64, num_taps: usize, window_type: &WindowType) -
 /// Design a bandpass FIR filter as the difference of two lowpass filters.
 ///
 /// Passes frequencies in \[low, high\] (normalized).
-pub fn firwin_bandpass(
-    low: f64,
-    high: f64,
-    num_taps: usize,
-    window_type: &WindowType,
-) -> Vec<f64> {
+pub fn firwin_bandpass(low: f64, high: f64, num_taps: usize, window_type: &WindowType) -> Vec<f64> {
     let num_taps = num_taps | 1;
     let m = num_taps / 2;
     let omega_lo = PI * low.clamp(0.0, 1.0);
@@ -133,12 +128,7 @@ pub fn firwin_bandpass(
 }
 
 /// Design a bandstop FIR filter via spectral inversion of a bandpass.
-pub fn firwin_bandstop(
-    low: f64,
-    high: f64,
-    num_taps: usize,
-    window_type: &WindowType,
-) -> Vec<f64> {
+pub fn firwin_bandstop(low: f64, high: f64, num_taps: usize, window_type: &WindowType) -> Vec<f64> {
     let mut h = firwin_bandpass(low, high, num_taps, window_type);
     let center = h.len() / 2;
     for v in h.iter_mut() {
@@ -216,9 +206,7 @@ pub fn remez_fir(
     let grid_x: Vec<f64> = grid.iter().map(|g| (PI * g.freq).cos()).collect();
 
     // Initialize extremals uniformly distributed on the grid
-    let mut ext_idx: Vec<usize> = (0..r)
-        .map(|i| i * (grid.len() - 1) / (r - 1))
-        .collect();
+    let mut ext_idx: Vec<usize> = (0..r).map(|i| i * (grid.len() - 1) / (r - 1)).collect();
 
     let mut prev_delta = 0.0f64;
 
@@ -384,7 +372,7 @@ fn barycentric_weights(x: &[f64]) -> Vec<f64> {
     // w_j = sign_j / exp(log_abs_prod_j)
     // Center by subtracting the median to prevent underflow/overflow
     let mut sorted_logs = log_abs_prod.clone();
-    sorted_logs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_logs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = sorted_logs[r / 2];
 
     let mut w: Vec<f64> = (0..r)
@@ -425,11 +413,7 @@ fn barycentric_eval(nodes: &[f64], values: &[f64], weights: &[f64], x: f64) -> f
         den += t;
     }
 
-    if den.abs() < 1e-300 {
-        0.0
-    } else {
-        num / den
-    }
+    if den.abs() < 1e-300 { 0.0 } else { num / den }
 }
 
 /// Find r extremal indices from the weighted error vector.
@@ -453,12 +437,8 @@ fn find_extremals(error: &[f64], r: usize) -> Vec<usize> {
 
     // Interior: local extrema where |E| is locally maximal with consistent sign
     for i in 1..n - 1 {
-        let is_local_max = error[i] > 0.0
-            && error[i] >= error[i - 1]
-            && error[i] >= error[i + 1];
-        let is_local_min = error[i] < 0.0
-            && error[i] <= error[i - 1]
-            && error[i] <= error[i + 1];
+        let is_local_max = error[i] > 0.0 && error[i] >= error[i - 1] && error[i] >= error[i + 1];
+        let is_local_min = error[i] < 0.0 && error[i] <= error[i - 1] && error[i] <= error[i + 1];
         if is_local_max || is_local_min {
             peaks.push((i, error[i]));
         }
@@ -651,6 +631,14 @@ impl FirFilter {
         self.coeffs.is_empty()
     }
 
+    /// Feed one sample into the delay line without computing the output.
+    /// Use with `compute_output()` for efficient decimation (polyphase style):
+    /// push M-1 samples, then call `process_sample` for the M-th.
+    pub fn push_sample(&mut self, input: Sample) {
+        self.buffer[self.pos] = input;
+        self.pos = (self.pos + 1) % self.coeffs.len();
+    }
+
     /// Filter one IQ sample. O(L) per sample.
     pub fn process_sample(&mut self, input: Sample) -> Sample {
         let len = self.coeffs.len();
@@ -839,10 +827,7 @@ mod tests {
         // Stopband (f > 0.55): well attenuated
         for &(f, mag_db, _) in &resp {
             if f > 0.55 {
-                assert!(
-                    mag_db < -40.0,
-                    "Stopband rejection at f={f}: {mag_db} dB"
-                );
+                assert!(mag_db < -40.0, "Stopband rejection at f={f}: {mag_db} dB");
             }
         }
     }

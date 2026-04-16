@@ -91,12 +91,11 @@ pub async fn run(args: DemodArgs, device_index: u32) -> Result<()> {
     let mode_str = args.mode.as_str();
 
     // Get defaults from wavecore for this mode
-    let defaults = mode_defaults(mode_str)
-        .ok_or_else(|| anyhow::anyhow!("Unknown demod mode: {mode_str}"))?;
+    let defaults =
+        mode_defaults(mode_str).ok_or_else(|| anyhow::anyhow!("Unknown demod mode: {mode_str}"))?;
 
     let sample_rate = args.sample_rate.unwrap_or(defaults.sample_rate);
-    let gain_mode = wavecore::util::parse_gain(&args.gain)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
@@ -110,8 +109,8 @@ pub async fn run(args: DemodArgs, device_index: u32) -> Result<()> {
     };
 
     let registry = DecoderRegistry::new();
-    let (session, events) = SessionManager::new(config, registry)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (session, events) =
+        SessionManager::new(config, registry).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Start demod
     let demod_config = DemodConfig {
@@ -122,6 +121,8 @@ pub async fn run(args: DemodArgs, device_index: u32) -> Result<()> {
         squelch: args.squelch,
         deemph_us: args.deemph,
         output_wav: args.output.as_ref().map(|s| s.into()),
+        emit_visualization: false,
+        spectrum_update_interval_blocks: 8,
     };
 
     session

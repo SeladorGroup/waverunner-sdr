@@ -184,17 +184,24 @@ pub fn disable_decoder(name: String, state: State<'_, AppState>) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn start_record(path: String, format: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn start_record(
+    path: String,
+    format: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let fmt = match format.as_str() {
         "cf32" | "raw" => RecordFormat::RawCf32,
         "wav" => RecordFormat::Wav,
         "sigmf" => RecordFormat::SigMf,
         _ => return Err(format!("Unknown format: {format}")),
     };
-    send_command(&state, Command::StartRecord {
-        path: PathBuf::from(path),
-        format: fmt,
-    })
+    send_command(
+        &state,
+        Command::StartRecord {
+            path: PathBuf::from(path),
+            format: fmt,
+        },
+    )
 }
 
 #[tauri::command]
@@ -356,9 +363,7 @@ pub fn deactivate_mode(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn measure_signal(state: State<'_, AppState>) -> Result<(), String> {
     let cfg = state.session_config.lock().clone().ok_or("Not connected")?;
-    let id = state
-        .analysis_counter
-        .fetch_add(1, Ordering::Relaxed);
+    let id = state.analysis_counter.fetch_add(1, Ordering::Relaxed);
     let request = wavecore::analysis::AnalysisRequest::MeasureSignal(
         wavecore::analysis::measurement::MeasureConfig {
             signal_center_bin: cfg.fft_size / 2,
@@ -373,25 +378,20 @@ pub fn measure_signal(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn analyze_burst(threshold_db: f32, state: State<'_, AppState>) -> Result<(), String> {
     let cfg = state.session_config.lock().clone().ok_or("Not connected")?;
-    let id = state
-        .analysis_counter
-        .fetch_add(1, Ordering::Relaxed);
-    let request = wavecore::analysis::AnalysisRequest::AnalyzeBurst(
-        wavecore::analysis::burst::BurstConfig {
+    let id = state.analysis_counter.fetch_add(1, Ordering::Relaxed);
+    let request =
+        wavecore::analysis::AnalysisRequest::AnalyzeBurst(wavecore::analysis::burst::BurstConfig {
             threshold_db,
             min_burst_samples: 10,
             sample_rate: cfg.sample_rate,
-        },
-    );
+        });
     send_command(&state, Command::RunAnalysis { id, request })
 }
 
 #[tauri::command]
 pub fn estimate_modulation(state: State<'_, AppState>) -> Result<(), String> {
     let cfg = state.session_config.lock().clone().ok_or("Not connected")?;
-    let id = state
-        .analysis_counter
-        .fetch_add(1, Ordering::Relaxed);
+    let id = state.analysis_counter.fetch_add(1, Ordering::Relaxed);
     let request = wavecore::analysis::AnalysisRequest::EstimateModulation(
         wavecore::analysis::modulation::ModulationConfig {
             sample_rate: cfg.sample_rate,
@@ -403,9 +403,7 @@ pub fn estimate_modulation(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn compare_spectra(state: State<'_, AppState>) -> Result<(), String> {
-    let id = state
-        .analysis_counter
-        .fetch_add(1, Ordering::Relaxed);
+    let id = state.analysis_counter.fetch_add(1, Ordering::Relaxed);
     send_command(
         &state,
         Command::RunAnalysis {
@@ -458,15 +456,20 @@ pub fn export_data(format: String, path: String, state: State<'_, AppState>) -> 
 // ============================================================================
 
 #[tauri::command]
-pub fn add_annotation(kind: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_command(
-        &state,
-        Command::AddAnnotation { kind, text },
-    )
+pub fn add_annotation(
+    kind: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_command(&state, Command::AddAnnotation { kind, text })
 }
 
 #[tauri::command]
-pub fn export_timeline(path: String, format: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn export_timeline(
+    path: String,
+    format: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let fmt = match format.as_str() {
         "csv" => wavecore::session::TimelineExportFormat::Csv,
         _ => wavecore::session::TimelineExportFormat::Json,

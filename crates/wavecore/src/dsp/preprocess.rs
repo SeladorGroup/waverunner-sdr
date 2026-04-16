@@ -3,8 +3,8 @@ use crate::types::Sample;
 /// DC offset removal using exponential moving average.
 ///
 /// Implements the first-order IIR highpass:
-///   y[n] = x[n] - dc[n]
-///   dc[n] = α·x[n] + (1-α)·dc[n-1]
+///   `y[n] = x[n] - dc[n]`
+///   `dc[n] = α·x[n] + (1-α)·dc[n-1]`
 ///
 /// where α controls the adaptation rate. Smaller α tracks slower DC changes
 /// but removes the DC component more cleanly. The -3dB cutoff of this
@@ -82,16 +82,16 @@ impl DcRemover {
 ///   I_corr = I
 ///   Q_corr = (Q - μ·I) / √(1 - μ²)
 ///
-/// where μ = E[I·Q] / E[I²] estimates the correlation between I and Q
+/// where `μ = E[I·Q] / E[I²]` estimates the correlation between I and Q
 /// (which should be zero for perfect quadrature).
 ///
 /// The correction is adaptive, continuously tracking slow parameter drift.
 pub struct IqCorrector {
-    /// Correlation estimate: E[I·Q]
+    /// Correlation estimate: `E[I·Q]`
     mu: f32,
-    /// I power estimate: E[I²]
+    /// I power estimate: `E[I²]`
     power_i: f32,
-    /// Q power estimate: E[Q²]
+    /// Q power estimate: `E[Q²]`
     power_q: f32,
     /// Adaptation rate
     alpha: f32,

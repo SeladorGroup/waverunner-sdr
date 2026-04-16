@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::time::Instant;
 
@@ -160,9 +161,56 @@ fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
 pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
     // Handle `decode list` — print all registered decoders and exit
     if matches!(args.protocol, DecodeProtocol::List) {
-        println!("Available decoders:");
-        for name in decoders::DECODER_NAMES {
-            println!("  {name}");
+        let tool_index: HashMap<_, _> = wavecore::dsp::decoders::tools::cached_tools()
+            .iter()
+            .map(|tool| (tool.name, tool))
+            .collect();
+
+        if matches!(args.format, OutputFormat::Json) {
+            let rows: Vec<serde_json::Value> = decoders::DECODER_DESCRIPTORS
+                .iter()
+                .map(|descriptor| {
+                    let tool = descriptor
+                        .required_tool
+                        .and_then(|tool_name| tool_index.get(tool_name).copied());
+                    serde_json::json!({
+                        "name": descriptor.name,
+                        "backend": descriptor.backend.as_str(),
+                        "required_tool": descriptor.required_tool,
+                        "tool_installed": tool.map(|t| t.installed),
+                        "resolved_command": tool.and_then(|t| t.resolved_command),
+                        "summary": descriptor.summary,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        } else {
+            println!("Available decoders:");
+            println!();
+            println!(
+                "  {:<14} {:<8} {:<18} Summary",
+                "Name", "Backend", "Support"
+            );
+            for descriptor in decoders::DECODER_DESCRIPTORS {
+                let support = match descriptor.required_tool {
+                    None => "builtin".to_string(),
+                    Some(tool_name) => match tool_index.get(tool_name).copied() {
+                        Some(tool) if tool.installed => match tool.resolved_command {
+                            Some(command) if command != tool_name => format!("ready ({command})"),
+                            _ => "ready".to_string(),
+                        },
+                        Some(_) | None => format!("missing ({tool_name})"),
+                    },
+                };
+
+                println!(
+                    "  {:<14} {:<8} {:<18} {}",
+                    descriptor.name,
+                    descriptor.backend.as_str(),
+                    support,
+                    descriptor.summary,
+                );
+            }
         }
         return Ok(());
     }
@@ -172,8 +220,7 @@ pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
         None => anyhow::bail!("Unknown decoder. Use `decode list` to see available decoders."),
     };
     let sample_rate = args.sample_rate.unwrap_or(pcfg.default_sample_rate);
-    let gain_mode = wavecore::util::parse_gain(&args.gain)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Build decoder registry for the SessionManager
     let mut registry = DecoderRegistry::new();
@@ -201,7 +248,8 @@ pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to start session: {e}"))?;
 
     // Enable the decoder via SessionManager command
-    session.send(Command::EnableDecoder(pcfg.decoder_name.to_string()))
+    session
+        .send(Command::EnableDecoder(pcfg.decoder_name.to_string()))
         .map_err(|e| anyhow::anyhow!("Failed to enable decoder: {e}"))?;
 
     // Print banner
@@ -269,10 +317,7 @@ pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
     session.shutdown();
 
     let elapsed = start_time.elapsed().as_secs_f64();
-    eprintln!(
-        "\nDone. {} messages decoded in {:.1}s.",
-        msg_count, elapsed,
-    );
+    eprintln!("\nDone. {} messages decoded in {:.1}s.", msg_count, elapsed,);
     Ok(())
 }
 
@@ -297,10 +342,7 @@ fn print_message_text(msg: &DecodedMessage, seq: u64) {
     };
 
     println!();
-    println!(
-        "━━━ #{} [{}] {} ━━━",
-        seq, msg.decoder, age,
-    );
+    println!("━━━ #{} [{}] {} ━━━", seq, msg.decoder, age,);
     println!("  {}", msg.summary);
 
     // Print structured fields in key-value pairs

@@ -164,7 +164,13 @@ mod tests {
 
     #[test]
     fn lut_boundary_values() {
-        for cm in [Colormap::Turbo, Colormap::Viridis, Colormap::Magma, Colormap::Inferno, Colormap::Grayscale] {
+        for cm in [
+            Colormap::Turbo,
+            Colormap::Viridis,
+            Colormap::Magma,
+            Colormap::Inferno,
+            Colormap::Grayscale,
+        ] {
             let lut = ColormapLut::new(cm);
             // First and last entries should have full alpha
             assert_eq!(lut.table[0][3], 255);
@@ -176,7 +182,10 @@ mod tests {
     fn lut_endpoints() {
         let lut = ColormapLut::new(Colormap::Turbo);
         // Turbo starts dark blue
-        assert!(lut.table[0][2] > lut.table[0][0], "Turbo should start bluish");
+        assert!(
+            lut.table[0][2] > lut.table[0][0],
+            "Turbo should start bluish"
+        );
         // Turbo ends dark red
         let last = lut.table[255];
         assert!(last[0] > last[2], "Turbo should end reddish");
@@ -186,7 +195,10 @@ mod tests {
     fn grayscale_monotonic() {
         let lut = ColormapLut::new(Colormap::Grayscale);
         for i in 0..255 {
-            assert!(lut.table[i + 1][0] >= lut.table[i][0], "Grayscale should be monotonic");
+            assert!(
+                lut.table[i + 1][0] >= lut.table[i][0],
+                "Grayscale should be monotonic"
+            );
             // R = G = B for grayscale
             assert_eq!(lut.table[i][0], lut.table[i][1]);
             assert_eq!(lut.table[i][1], lut.table[i][2]);

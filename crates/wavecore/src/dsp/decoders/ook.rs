@@ -29,7 +29,6 @@ use crate::types::Sample;
 // Constants
 // ============================================================================
 
-
 /// Minimum pulse duration in microseconds (to filter glitches).
 const MIN_PULSE_US: f64 = 50.0;
 /// Maximum pulse duration in microseconds.
@@ -208,11 +207,7 @@ fn manchester_decode(pulses: &[Pulse], short_us: f64, tolerance: f64) -> Option<
         }
     }
 
-    if bits.len() >= 8 {
-        Some(bits)
-    } else {
-        None
-    }
+    if bits.len() >= 8 { Some(bits) } else { None }
 }
 
 // ============================================================================
@@ -242,8 +237,10 @@ fn decode_oregon_scientific(pulses: &[Pulse]) -> Option<DecodedMessage> {
     let mut sync_pos = None;
     for i in 0..bits.len().saturating_sub(16) {
         // Look for 0xA (1010) nibble pattern that follows preamble
-        if bits[i] == 1 && bits.get(i + 1) == Some(&0)
-            && bits.get(i + 2) == Some(&1) && bits.get(i + 3) == Some(&0)
+        if bits[i] == 1
+            && bits.get(i + 1) == Some(&0)
+            && bits.get(i + 2) == Some(&1)
+            && bits.get(i + 3) == Some(&0)
         {
             sync_pos = Some(i + 4);
             break;
@@ -525,10 +522,7 @@ fn decode_tpms(pulses: &[Pulse]) -> Option<DecodedMessage> {
         fields.insert("temperature_f".to_string(), format!("{:.0}", temp_f));
     }
 
-    let summary = format!(
-        "TPMS {:08X} {:.1}PSI",
-        sensor_id, pressure_psi
-    );
+    let summary = format!("TPMS {:08X} {:.1}PSI", sensor_id, pressure_psi);
 
     Some(DecodedMessage {
         decoder: "ook".to_string(),
@@ -702,7 +696,11 @@ mod tests {
 
         assert!(result.is_some(), "Should detect pulse train");
         let pulses = result.unwrap();
-        assert!(pulses.len() >= 4, "Should have at least 4 pulses/gaps, got {}", pulses.len());
+        assert!(
+            pulses.len() >= 4,
+            "Should have at least 4 pulses/gaps, got {}",
+            pulses.len()
+        );
     }
 
     #[test]
@@ -742,22 +740,70 @@ mod tests {
         // Create alternating short-short pairs (representing bits)
         let short = 500.0;
         let pulses = vec![
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
-            Pulse { duration_us: short, is_high: true },
-            Pulse { duration_us: short, is_high: false },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: short,
+                is_high: false,
+            },
         ];
 
         let bits = manchester_decode(&pulses, short, 0.3);
@@ -775,14 +821,38 @@ mod tests {
         let long = 1000.0;
 
         let pulses = vec![
-            Pulse { duration_us: long, is_high: true },  // 1
-            Pulse { duration_us: long, is_high: false }, // 0
-            Pulse { duration_us: long, is_high: true },  // 1
-            Pulse { duration_us: long, is_high: false }, // 0
-            Pulse { duration_us: long, is_high: true },  // 1
-            Pulse { duration_us: long, is_high: false }, // 0
-            Pulse { duration_us: long, is_high: true },  // 1
-            Pulse { duration_us: long, is_high: false }, // 0
+            Pulse {
+                duration_us: long,
+                is_high: true,
+            }, // 1
+            Pulse {
+                duration_us: long,
+                is_high: false,
+            }, // 0
+            Pulse {
+                duration_us: long,
+                is_high: true,
+            }, // 1
+            Pulse {
+                duration_us: long,
+                is_high: false,
+            }, // 0
+            Pulse {
+                duration_us: long,
+                is_high: true,
+            }, // 1
+            Pulse {
+                duration_us: long,
+                is_high: false,
+            }, // 0
+            Pulse {
+                duration_us: long,
+                is_high: true,
+            }, // 1
+            Pulse {
+                duration_us: long,
+                is_high: false,
+            }, // 0
         ];
 
         let bits = manchester_decode(&pulses, short, 0.3);
@@ -796,8 +866,14 @@ mod tests {
     #[test]
     fn manchester_decode_too_few_bits() {
         let pulses = vec![
-            Pulse { duration_us: 500.0, is_high: true },
-            Pulse { duration_us: 500.0, is_high: false },
+            Pulse {
+                duration_us: 500.0,
+                is_high: true,
+            },
+            Pulse {
+                duration_us: 500.0,
+                is_high: false,
+            },
         ];
         let bits = manchester_decode(&pulses, 500.0, 0.3);
         assert!(bits.is_none(), "Too few bits should return None");

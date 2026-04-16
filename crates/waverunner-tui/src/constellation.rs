@@ -16,10 +16,7 @@ use ratatui::widgets::Widget;
 /// Braille dot bit positions.
 /// Left column (col 0): dots 1,2,3,7 → bits 0,1,2,6
 /// Right column (col 1): dots 4,5,6,8 → bits 3,4,5,7
-const BRAILLE_DOT_BITS: [[u8; 4]; 2] = [
-    [0, 1, 2, 6],
-    [3, 4, 5, 7],
-];
+const BRAILLE_DOT_BITS: [[u8; 4]; 2] = [[0, 1, 2, 6], [3, 4, 5, 7]];
 
 const BRAILLE_BASE: u32 = 0x2800;
 
@@ -125,7 +122,12 @@ impl<'a> Widget for ConstellationWidget<'a> {
 
         // Label axes
         if width > 6 && height > 2 {
-            buf.set_string(area.x + width as u16 - 2, area.y + center_y as u16, "I", axis_style);
+            buf.set_string(
+                area.x + width as u16 - 2,
+                area.y + center_y as u16,
+                "I",
+                axis_style,
+            );
             buf.set_string(area.x + center_x as u16 + 1, area.y, "Q", axis_style);
         }
     }

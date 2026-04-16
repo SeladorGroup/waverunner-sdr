@@ -29,121 +29,77 @@
 //! | `rtl433-915`   | 915 MHz          |
 
 use std::collections::BTreeMap;
-use std::io::Write;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
-
-use crossbeam_channel::{Receiver, Sender};
 
 use crate::dsp::decoder::{DecoderPlugin, DecoderRequirements};
 use crate::session::DecodedMessage;
 use crate::types::Sample;
 
+use super::subprocess::{
+    InputFormat, OutputParser, SubprocessBridge, SubprocessConfig, samples_to_cu8,
+};
+use super::tools;
+
 /// Decoder that delegates to an external `rtl_433` subprocess.
-///
-/// Lazily spawns rtl_433 on the first call to [`process()`](DecoderPlugin::process).
-/// IQ samples are converted from cf32 to cu8 and written to rtl_433's stdin.
-/// A reader thread parses JSON lines from stdout into [`DecodedMessage`]s.
 pub struct Rtl433Decoder {
+    decoder_name: String,
     sample_rate: f64,
     center_freq: f64,
-    child: Option<Child>,
-    stdin: Option<ChildStdin>,
-    message_rx: Option<Receiver<DecodedMessage>>,
-    reader_handle: Option<std::thread::JoinHandle<()>>,
-    init_attempted: bool,
-    init_error: Option<String>,
+    bridge: SubprocessBridge,
+    config: Option<SubprocessConfig>,
 }
 
 impl Rtl433Decoder {
-    /// Create a new rtl_433 decoder.
-    ///
-    /// The subprocess is not started until the first call to `process()`.
     pub fn new(sample_rate: f64, center_freq: f64) -> Self {
+        Self::named(sample_rate, center_freq, "rtl433")
+    }
+
+    pub fn named(sample_rate: f64, center_freq: f64, decoder_name: impl Into<String>) -> Self {
+        let decoder_name = decoder_name.into();
+        let config = Self::make_config(sample_rate, center_freq, &decoder_name);
         Self {
+            decoder_name,
             sample_rate,
             center_freq,
-            child: None,
-            stdin: None,
-            message_rx: None,
-            reader_handle: None,
-            init_attempted: false,
-            init_error: None,
+            bridge: SubprocessBridge::new(),
+            config: Some(config),
         }
     }
 
-    /// Lazily spawn the rtl_433 subprocess. Returns true if ready.
-    fn ensure_started(&mut self) -> bool {
-        if self.child.is_some() {
-            return true;
-        }
-        if self.init_attempted {
-            return false;
-        }
-        self.init_attempted = true;
+    fn make_config(sample_rate: f64, center_freq: f64, decoder_name: &str) -> SubprocessConfig {
+        let rate = sample_rate as u32;
+        let freq = center_freq as u64;
 
-        let rate = self.sample_rate as u32;
-        let freq = self.center_freq as u64;
-
-        let result = Command::new("rtl_433")
-            .args([
-                "-r", "-",                  // read cu8 IQ from stdin
-                "-s", &rate.to_string(),    // sample rate
-                "-f", &freq.to_string(),    // center frequency
-                "-F", "json",               // JSON output on stdout
-                "-M", "utc",                // UTC timestamps
-                "-M", "level",              // include signal level info
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
-
-        match result {
-            Ok(mut child) => {
-                let Some(stdin) = child.stdin.take() else {
-                    self.init_error = Some("rtl_433: stdin not available".to_string());
-                    child.kill().ok();
-                    return false;
-                };
-                let Some(stdout) = child.stdout.take() else {
-                    self.init_error = Some("rtl_433: stdout not available".to_string());
-                    child.kill().ok();
-                    return false;
-                };
-
-                let (tx, rx) = crossbeam_channel::unbounded();
-                let handle = match std::thread::Builder::new()
-                    .name("rtl433-reader".to_string())
-                    .spawn(move || {
-                        read_json_lines(stdout, tx);
-                    }) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        self.init_error =
-                            Some(format!("Failed to spawn rtl_433 reader thread: {e}"));
-                        child.kill().ok();
-                        return false;
-                    }
-                };
-
-                self.child = Some(child);
-                self.stdin = Some(stdin);
-                self.message_rx = Some(rx);
-                self.reader_handle = Some(handle);
-                true
-            }
-            Err(e) => {
-                self.init_error = Some(format!("Failed to start rtl_433: {e}"));
-                false
-            }
+        SubprocessConfig {
+            command: tools::resolve_tool_command("rtl_433")
+                .unwrap_or("rtl_433")
+                .to_string(),
+            args: vec![
+                "-r".to_string(),
+                "-".to_string(), // read cu8 IQ from stdin
+                "-s".to_string(),
+                rate.to_string(), // sample rate
+                "-f".to_string(),
+                freq.to_string(), // center frequency
+                "-F".to_string(),
+                "json".to_string(), // JSON output
+                "-M".to_string(),
+                "utc".to_string(), // UTC timestamps
+                "-M".to_string(),
+                "level".to_string(), // signal level info
+            ],
+            input_format: InputFormat::Cu8Iq,
+            output_parser: Box::new(Rtl433Parser {
+                decoder_name: decoder_name.to_string(),
+            }),
+            thread_name: "rtl433-reader".to_string(),
         }
     }
 }
 
 impl DecoderPlugin for Rtl433Decoder {
     fn name(&self) -> &str {
-        "rtl433"
+        &self.decoder_name
     }
 
     fn requirements(&self) -> DecoderRequirements {
@@ -156,9 +112,25 @@ impl DecoderPlugin for Rtl433Decoder {
     }
 
     fn process(&mut self, samples: &[Sample]) -> Vec<DecodedMessage> {
-        if !self.ensure_started() {
-            // Report the init error exactly once
-            if let Some(err) = self.init_error.take() {
+        if !tools::is_tool_available("rtl_433") {
+            if !self.bridge.init_attempted {
+                self.bridge.init_attempted = true;
+                return vec![DecodedMessage {
+                    decoder: "rtl433".to_string(),
+                    timestamp: Instant::now(),
+                    summary: format!(
+                        "rtl_433 not installed. Install with: {}",
+                        tools::install_hint("rtl_433")
+                    ),
+                    fields: BTreeMap::new(),
+                    raw_bits: None,
+                }];
+            }
+            return vec![];
+        }
+
+        if let Some(ref mut config) = self.config.take() {
+            if let Err(err) = self.bridge.ensure_started(config) {
                 return vec![DecodedMessage {
                     decoder: "rtl433".to_string(),
                     timestamp: Instant::now(),
@@ -167,101 +139,58 @@ impl DecoderPlugin for Rtl433Decoder {
                     raw_bits: None,
                 }];
             }
+        } else if !self.bridge.is_running() {
             return vec![];
         }
 
-        // Convert cf32 → cu8 and write to rtl_433 stdin
         let cu8_data = samples_to_cu8(samples);
-        if let Some(ref mut stdin) = self.stdin {
-            if stdin.write_all(&cu8_data).is_err() {
-                // rtl_433 process died — full cleanup to avoid leaking resources
-                self.stdin = None;
-                if let Some(mut child) = self.child.take() {
-                    child.kill().ok();
-                    child.wait().ok();
-                }
-                if let Some(handle) = self.reader_handle.take() {
-                    handle.join().ok();
-                }
-                self.message_rx = None;
-                return vec![DecodedMessage {
-                    decoder: "rtl433".to_string(),
-                    timestamp: Instant::now(),
-                    summary: "rtl_433 process terminated unexpectedly".to_string(),
-                    fields: BTreeMap::new(),
-                    raw_bits: None,
-                }];
-            }
+        if !self.bridge.write_stdin(&cu8_data) {
+            let summary = self
+                .bridge
+                .take_recent_stderr()
+                .map(|stderr| format!("rtl_433 process terminated unexpectedly: {stderr}"))
+                .unwrap_or_else(|| "rtl_433 process terminated unexpectedly".to_string());
+            return vec![DecodedMessage {
+                decoder: "rtl433".to_string(),
+                timestamp: Instant::now(),
+                summary,
+                fields: BTreeMap::new(),
+                raw_bits: None,
+            }];
         }
 
-        // Drain available messages (non-blocking)
-        let mut messages = Vec::new();
-        if let Some(ref rx) = self.message_rx {
-            while let Ok(msg) = rx.try_recv() {
-                messages.push(msg);
-            }
-        }
-
-        messages
+        self.bridge.drain_messages()
     }
 
     fn reset(&mut self) {
-        // Drop stdin first so rtl_433 sees EOF and the reader thread can exit
-        self.stdin = None;
-        if let Some(mut child) = self.child.take() {
-            child.kill().ok();
-            child.wait().ok();
-        }
-        if let Some(handle) = self.reader_handle.take() {
-            handle.join().ok();
-        }
-        self.message_rx = None;
-        self.init_attempted = false;
-        self.init_error = None;
-    }
-}
-
-impl Drop for Rtl433Decoder {
-    fn drop(&mut self) {
-        self.stdin = None;
-        if let Some(mut child) = self.child.take() {
-            child.kill().ok();
-            child.wait().ok();
-        }
-        // Reader thread exits when stdout closes — don't block in Drop
+        self.bridge.reset();
+        self.config = Some(Self::make_config(
+            self.sample_rate,
+            self.center_freq,
+            &self.decoder_name,
+        ));
     }
 }
 
 // ============================================================================
-// Helpers
+// rtl_433 JSON output parser
 // ============================================================================
 
-/// Read JSON lines from rtl_433 stdout and send parsed messages.
-fn read_json_lines(stdout: ChildStdout, tx: Sender<DecodedMessage>) {
-    use std::io::{BufRead, BufReader};
+struct Rtl433Parser {
+    decoder_name: String,
+}
 
-    let reader = BufReader::new(stdout);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
-        let trimmed = line.trim();
-        if trimmed.is_empty() || !trimmed.starts_with('{') {
-            continue;
+impl OutputParser for Rtl433Parser {
+    fn parse_line(&mut self, line: &str) -> Option<DecodedMessage> {
+        if !line.starts_with('{') {
+            return None;
         }
-        if let Some(msg) = parse_json_message(trimmed) {
-            if tx.send(msg).is_err() {
-                break;
-            }
-        }
+        parse_json_message(line, &self.decoder_name)
     }
 }
 
 /// Parse a single rtl_433 JSON line into a [`DecodedMessage`].
-///
-/// rtl_433 emits objects like:
-/// ```json
-/// {"time":"2024-01-01 12:00:00","model":"Acurite-5n1","id":1234,"temperature_C":22.5}
-/// ```
-fn parse_json_message(json_str: &str) -> Option<DecodedMessage> {
+fn parse_json_message(json_str: &str, decoder_name: &str) -> Option<DecodedMessage> {
     let obj: serde_json::Value = serde_json::from_str(json_str).ok()?;
     let map = obj.as_object()?;
 
@@ -270,7 +199,6 @@ fn parse_json_message(json_str: &str) -> Option<DecodedMessage> {
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
 
-    // Collect all fields
     let mut fields = BTreeMap::new();
     for (key, value) in map {
         let val_str = match value {
@@ -283,7 +211,6 @@ fn parse_json_message(json_str: &str) -> Option<DecodedMessage> {
         fields.insert(key.clone(), val_str);
     }
 
-    // Build a human-readable summary
     let mut parts = vec![model.to_string()];
     if let Some(id) = map.get("id").and_then(|v| v.as_u64()) {
         parts.push(format!("id:{id}"));
@@ -300,30 +227,13 @@ fn parse_json_message(json_str: &str) -> Option<DecodedMessage> {
     }
 
     Some(DecodedMessage {
-        decoder: "rtl433".to_string(),
+        decoder: decoder_name.to_string(),
         timestamp: Instant::now(),
         summary: parts.join(" | "),
         fields,
         raw_bits: None,
     })
 }
-
-/// Convert cf32 IQ samples to unsigned 8-bit IQ (cu8) for rtl_433.
-///
-/// cf32: `(f32, f32)` with range approximately `[-1, 1]`
-/// cu8: `(u8, u8)` with range `[0, 255]`, center at 127.5
-fn samples_to_cu8(samples: &[Sample]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(samples.len() * 2);
-    for s in samples {
-        buf.push(((s.re * 127.5) + 127.5).clamp(0.0, 255.0) as u8);
-        buf.push(((s.im * 127.5) + 127.5).clamp(0.0, 255.0) as u8);
-    }
-    buf
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -332,7 +242,7 @@ mod tests {
     #[test]
     fn parse_json_basic() {
         let json = r#"{"time":"2024-01-01 12:00:00","model":"Acurite-5n1","id":1234,"temperature_C":22.5,"humidity":45}"#;
-        let msg = parse_json_message(json).unwrap();
+        let msg = parse_json_message(json, "rtl433").unwrap();
         assert_eq!(msg.decoder, "rtl433");
         assert!(msg.summary.contains("Acurite-5n1"));
         assert!(msg.summary.contains("id:1234"));
@@ -345,7 +255,7 @@ mod tests {
     #[test]
     fn parse_json_minimal() {
         let json = r#"{"model":"Generic-Remote"}"#;
-        let msg = parse_json_message(json).unwrap();
+        let msg = parse_json_message(json, "rtl433").unwrap();
         assert_eq!(msg.summary, "Generic-Remote");
         assert_eq!(msg.fields.len(), 1);
     }
@@ -353,28 +263,28 @@ mod tests {
     #[test]
     fn parse_json_unknown_model() {
         let json = r#"{"data":"0xDEADBEEF"}"#;
-        let msg = parse_json_message(json).unwrap();
+        let msg = parse_json_message(json, "rtl433").unwrap();
         assert!(msg.summary.starts_with("unknown"));
     }
 
     #[test]
     fn parse_json_invalid() {
-        assert!(parse_json_message("not json").is_none());
-        assert!(parse_json_message("[]").is_none());
-        assert!(parse_json_message("").is_none());
+        assert!(parse_json_message("not json", "rtl433").is_none());
+        assert!(parse_json_message("[]", "rtl433").is_none());
+        assert!(parse_json_message("", "rtl433").is_none());
     }
 
     #[test]
     fn parse_json_temperature_f() {
         let json = r#"{"model":"Test","temperature_F":72.3}"#;
-        let msg = parse_json_message(json).unwrap();
+        let msg = parse_json_message(json, "rtl433").unwrap();
         assert!(msg.summary.contains("72.3F"));
     }
 
     #[test]
     fn parse_json_all_value_types() {
         let json = r#"{"model":"Test","active":true,"code":null,"data":[1,2],"count":42}"#;
-        let msg = parse_json_message(json).unwrap();
+        let msg = parse_json_message(json, "rtl433").unwrap();
         assert_eq!(msg.fields["active"], "true");
         assert_eq!(msg.fields["code"], "null");
         assert_eq!(msg.fields["data"], "[1,2]");
@@ -382,38 +292,9 @@ mod tests {
     }
 
     #[test]
-    fn samples_to_cu8_center() {
-        // Zero IQ should map to ~128
-        let samples = vec![Sample::new(0.0, 0.0)];
-        let cu8 = samples_to_cu8(&samples);
-        assert_eq!(cu8.len(), 2);
-        // 0.0 * 127.5 + 127.5 = 127.5 → 127 as u8
-        assert_eq!(cu8[0], 127);
-        assert_eq!(cu8[1], 127);
-    }
-
-    #[test]
-    fn samples_to_cu8_extremes() {
-        let samples = vec![Sample::new(1.0, -1.0)];
-        let cu8 = samples_to_cu8(&samples);
-        assert_eq!(cu8[0], 255); // 1.0 * 127.5 + 127.5 = 255
-        assert_eq!(cu8[1], 0);   // -1.0 * 127.5 + 127.5 = 0
-    }
-
-    #[test]
-    fn samples_to_cu8_clamp() {
-        // Values beyond [-1, 1] should be clamped
-        let samples = vec![Sample::new(2.0, -2.0)];
-        let cu8 = samples_to_cu8(&samples);
-        assert_eq!(cu8[0], 255);
-        assert_eq!(cu8[1], 0);
-    }
-
-    #[test]
     fn decoder_new_lazy_init() {
         let decoder = Rtl433Decoder::new(250_000.0, 433.92e6);
-        assert!(decoder.child.is_none());
-        assert!(!decoder.init_attempted);
+        assert!(!decoder.bridge.is_running());
     }
 
     #[test]
@@ -439,16 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn decoder_reset_clears_state() {
-        let mut decoder = Rtl433Decoder::new(250_000.0, 433.92e6);
-        // Simulate failed init
-        decoder.init_attempted = true;
-        decoder.init_error = Some("test error".to_string());
-
-        decoder.reset();
-
-        assert!(!decoder.init_attempted);
-        assert!(decoder.init_error.is_none());
-        assert!(decoder.child.is_none());
+    fn named_decoder_preserves_variant_name() {
+        let decoder = Rtl433Decoder::named(250_000.0, 868.0e6, "rtl433-868");
+        assert_eq!(decoder.name(), "rtl433-868");
     }
 }

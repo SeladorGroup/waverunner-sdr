@@ -119,7 +119,7 @@ pub fn generate_window(window_type: &WindowType, n: usize) -> Vec<f64> {
     }
 }
 
-/// Generate a generalized cosine sum window: w[n] = Σ aₖ·cos(2πkn/(N-1))
+/// Generate a generalized cosine sum window: `w[n] = Σ aₖ·cos(2πkn/(N-1))`
 fn cosine_sum_window(n: usize, coeffs: &[f64]) -> Vec<f64> {
     if n == 0 {
         return Vec::new();
@@ -142,7 +142,7 @@ fn cosine_sum_window(n: usize, coeffs: &[f64]) -> Vec<f64> {
 
 /// Kaiser window using modified Bessel function I₀.
 ///
-/// w[n] = I₀(β√(1 - ((2n/(N-1)) - 1)²)) / I₀(β)
+/// `w[n] = I₀(β√(1 - ((2n/(N-1)) - 1)²)) / I₀(β)`
 ///
 /// The Kaiser window is near-optimal in the sense of maximizing the energy
 /// concentration in the mainlobe for a given mainlobe width. It approximates
@@ -169,7 +169,7 @@ fn kaiser_window(n: usize, beta: f64) -> Vec<f64> {
 
 /// Gaussian window.
 ///
-/// w[n] = exp(-0.5 · ((n - (N-1)/2) / (σ·(N-1)/2))²)
+/// `w[n] = exp(-0.5 · ((n - (N-1)/2) / (σ·(N-1)/2))²)`
 fn gaussian_window(n: usize, sigma: f64) -> Vec<f64> {
     if n == 0 {
         return Vec::new();
@@ -403,8 +403,8 @@ pub fn kaiser_design(attenuation_db: f64, transition_width: f64) -> (f64, usize)
 /// The first K sequences (K ≤ 2NW) are used in multitaper spectral estimation.
 ///
 /// Uses the tridiagonal matrix formulation:
-///   d[n] = ((N-1-2n)/2)² · cos(2πW)   (diagonal)
-///   e[n] = n(N-n)/2                     (off-diagonal)
+///   `d[n] = ((N-1-2n)/2)² · cos(2πW)`   (diagonal)
+///   `e[n] = n(N-n)/2`                     (off-diagonal)
 ///
 /// Then finds eigenvectors via inverse iteration.
 pub fn dpss(n: usize, half_bandwidth: f64, num_tapers: usize) -> Vec<Vec<f64>> {
@@ -566,7 +566,7 @@ fn tridiag_inverse_iteration(diag: &[f64], off_diag: &[f64], eigenval: f64, n: u
     x
 }
 
-/// Convert f64 window to f32 for use with Sample (Complex<f32>).
+/// Convert f64 window to f32 for use with Sample (`Complex<f32>`).
 pub fn window_to_f32(window: &[f64]) -> Vec<f32> {
     window.iter().map(|&w| w as f32).collect()
 }

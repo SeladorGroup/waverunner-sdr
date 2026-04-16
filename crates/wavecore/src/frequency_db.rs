@@ -198,9 +198,7 @@ impl FrequencyDb {
         self.bands
             .iter()
             .filter(|b| {
-                freq_hz >= b.start_hz
-                    && freq_hz <= b.end_hz
-                    && b.regions.contains(&self.region)
+                freq_hz >= b.start_hz && freq_hz <= b.end_hz && b.regions.contains(&self.region)
             })
             .min_by_key(|b| ((b.end_hz - b.start_hz) * 1000.0) as u64)
     }
@@ -365,7 +363,7 @@ fn build_bands() -> Vec<BandAllocation> {
             service: ServiceType::FmBroadcast,
             modulation: "wfm",
             decoder: Some("rds"),
-            sample_rate: Some(2_048_000.0),
+            sample_rate: Some(1_024_000.0),
             bandwidth_range: (150_000.0, 250_000.0),
             regions: &[Region::JP],
         },
@@ -377,7 +375,7 @@ fn build_bands() -> Vec<BandAllocation> {
             service: ServiceType::FmBroadcast,
             modulation: "wfm",
             decoder: Some("rds"),
-            sample_rate: Some(2_048_000.0),
+            sample_rate: Some(1_024_000.0),
             bandwidth_range: (150_000.0, 250_000.0),
             regions: &[Region::NA, Region::EU, Region::AU],
         },

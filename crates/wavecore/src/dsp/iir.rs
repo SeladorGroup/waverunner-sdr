@@ -166,8 +166,7 @@ pub fn elliptic_poles_zeros(
         }
 
         // Poles from the v₀ parameter
-        let v0 = -(1.0 / (order as f64))
-            * jacobi_arcsinh(1.0 / eps_p, 1.0 - k1 * k1);
+        let v0 = -(1.0 / (order as f64)) * jacobi_arcsinh(1.0 / eps_p, 1.0 - k1 * k1);
 
         let (sn_v, cn_v, dn_v) = jacobi_elliptic(v0, 1.0 - k * k);
 
@@ -181,8 +180,7 @@ pub fn elliptic_poles_zeros(
 
     // Odd order: add a real pole
     if order % 2 == 1 {
-        let v0 = -(1.0 / (order as f64))
-            * jacobi_arcsinh(1.0 / eps_p, 1.0 - k1 * k1);
+        let v0 = -(1.0 / (order as f64)) * jacobi_arcsinh(1.0 / eps_p, 1.0 - k1 * k1);
         let (sn_v, _, _) = jacobi_elliptic(v0, 1.0 - k * k);
         poles.push(Complex::new(-sn_v.abs(), 0.0));
     }
@@ -321,7 +319,10 @@ fn jacobi_arcsinh(x: f64, m: f64) -> f64 {
         let t1 = (i + 1) as f64 * dx;
         let t_mid = (t0 + t1) / 2.0;
 
-        let f_mid = 1.0 / ((1.0 - t_mid * t_mid) * (1.0 - m * t_mid * t_mid)).max(1e-300).sqrt();
+        let f_mid = 1.0
+            / ((1.0 - t_mid * t_mid) * (1.0 - m * t_mid * t_mid))
+                .max(1e-300)
+                .sqrt();
         u += f_mid * dx;
     }
 
@@ -452,7 +453,11 @@ pub fn zpk_to_sos(zpk: &Zpk) -> (Vec<Biquad>, f64) {
         let idx = remaining_poles
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.norm().partial_cmp(&b.norm()).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|(_, a), (_, b)| {
+                a.norm()
+                    .partial_cmp(&b.norm())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|(i, _)| i)
             .unwrap();
 
@@ -515,13 +520,7 @@ pub fn zpk_to_sos(zpk: &Zpk) -> (Vec<Biquad>, f64) {
         let a1 = -(pole + pole_conj).re;
         let a2 = (pole * pole_conj).re;
 
-        sections.push(Biquad {
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-        });
+        sections.push(Biquad { b0, b1, b2, a1, a2 });
     }
 
     // Handle remaining single pole (odd order)
@@ -1122,7 +1121,9 @@ mod tests {
 
         // Sum of LP + HP should approximate all-pass
         // Feed white noise and check power conservation
-        let input: Vec<f32> = (0..10000).map(|i| ((i * 7 + 3) as f32 % 1.0) * 2.0 - 1.0).collect();
+        let input: Vec<f32> = (0..10000)
+            .map(|i| ((i * 7 + 3) as f32 % 1.0) * 2.0 - 1.0)
+            .collect();
 
         let lp_out = lp.process_block_out(&input);
         let hp_out = hp.process_block_out(&input);
@@ -1158,10 +1159,7 @@ mod tests {
         filt2.process_block(&mut out2);
 
         for (a, b) in out1.iter().zip(out2.iter()) {
-            assert!(
-                (a - b).abs() < 1e-6,
-                "Mismatch: {a} vs {b}"
-            );
+            assert!((a - b).abs() < 1e-6, "Mismatch: {a} vs {b}");
         }
     }
 }

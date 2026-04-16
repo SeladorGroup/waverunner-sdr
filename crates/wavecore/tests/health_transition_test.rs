@@ -104,7 +104,10 @@ fn latency_breakdown_populated() {
     session.shutdown();
     std::fs::remove_file(&path).ok();
 
-    assert!(found_populated, "Never received Stats with populated latency breakdown");
+    assert!(
+        found_populated,
+        "Never received Stats with populated latency breakdown"
+    );
 }
 
 /// Verify that initial health status is Normal under light load.

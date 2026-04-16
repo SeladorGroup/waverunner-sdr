@@ -88,45 +88,75 @@ pub fn export_to_file(config: &ExportConfig) -> Result<String, String> {
     }
 
     match (&config.format, &config.content) {
-        (ExportFormat::Csv, ExportContent::Spectrum { spectrum_db, sample_rate, center_freq }) => {
-            export_spectrum_csv(&config.path, spectrum_db, *sample_rate, *center_freq)
-        }
+        (
+            ExportFormat::Csv,
+            ExportContent::Spectrum {
+                spectrum_db,
+                sample_rate,
+                center_freq,
+            },
+        ) => export_spectrum_csv(&config.path, spectrum_db, *sample_rate, *center_freq),
         (ExportFormat::Csv, ExportContent::Tracking(snap)) => {
             export_tracking_csv(&config.path, snap)
         }
         (ExportFormat::Csv, ExportContent::DecodedMessages(msgs)) => {
             export_messages_csv(&config.path, msgs)
         }
-        (ExportFormat::Csv, ExportContent::Detections { detections, center_freq }) => {
-            export_detections_csv(&config.path, detections, *center_freq)
-        }
+        (
+            ExportFormat::Csv,
+            ExportContent::Detections {
+                detections,
+                center_freq,
+            },
+        ) => export_detections_csv(&config.path, detections, *center_freq),
         (ExportFormat::Csv, ExportContent::Measurement(report)) => {
             export_measurement_csv(&config.path, report)
         }
         (ExportFormat::Json, content) => export_json(&config.path, content),
-        (ExportFormat::Tsv, ExportContent::Spectrum { spectrum_db, sample_rate, center_freq }) => {
-            export_spectrum_tsv(&config.path, spectrum_db, *sample_rate, *center_freq)
-        }
+        (
+            ExportFormat::Tsv,
+            ExportContent::Spectrum {
+                spectrum_db,
+                sample_rate,
+                center_freq,
+            },
+        ) => export_spectrum_tsv(&config.path, spectrum_db, *sample_rate, *center_freq),
         (ExportFormat::Tsv, ExportContent::Tracking(snap)) => {
             export_tracking_tsv(&config.path, snap)
         }
         (ExportFormat::Tsv, ExportContent::DecodedMessages(msgs)) => {
             export_messages_tsv(&config.path, msgs)
         }
-        (ExportFormat::Tsv, ExportContent::Detections { detections, center_freq }) => {
-            export_detections_tsv(&config.path, detections, *center_freq)
-        }
+        (
+            ExportFormat::Tsv,
+            ExportContent::Detections {
+                detections,
+                center_freq,
+            },
+        ) => export_detections_tsv(&config.path, detections, *center_freq),
         (ExportFormat::Tsv, ExportContent::Measurement(report)) => {
             export_measurement_tsv(&config.path, report)
         }
         // PNG exports
-        (ExportFormat::Png, ExportContent::Spectrum { spectrum_db, sample_rate, center_freq }) => {
-            export_spectrum_png(&config.path, spectrum_db, *sample_rate, *center_freq)
+        (
+            ExportFormat::Png,
+            ExportContent::Spectrum {
+                spectrum_db,
+                sample_rate,
+                center_freq,
+            },
+        ) => export_spectrum_png(&config.path, spectrum_db, *sample_rate, *center_freq),
+        (
+            ExportFormat::Png,
+            ExportContent::Waterfall {
+                rows,
+                sample_rate,
+                center_freq,
+            },
+        ) => export_waterfall_png(&config.path, rows, *sample_rate, *center_freq),
+        (ExportFormat::Png, _) => {
+            Err("PNG export only supports Spectrum and Waterfall content".to_string())
         }
-        (ExportFormat::Png, ExportContent::Waterfall { rows, sample_rate, center_freq }) => {
-            export_waterfall_png(&config.path, rows, *sample_rate, *center_freq)
-        }
-        (ExportFormat::Png, _) => Err("PNG export only supports Spectrum and Waterfall content".to_string()),
         // CSV/TSV don't support Waterfall
         (_, ExportContent::Waterfall { .. }) => {
             Err("Waterfall content is only supported with PNG format".to_string())
@@ -143,16 +173,14 @@ fn export_spectrum_csv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "frequency_hz,power_dbfs")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "frequency_hz,power_dbfs").map_err(|e| format!("Write error: {e}"))?;
 
     let n = spectrum_db.len();
     let bin_width = sample_rate / n as f64;
 
     for (i, &db) in spectrum_db.iter().enumerate() {
         let freq = center_freq + (i as f64 - n as f64 / 2.0) * bin_width;
-        writeln!(file, "{freq:.1},{db:.2}")
-            .map_err(|e| format!("Write error: {e}"))?;
+        writeln!(file, "{freq:.1},{db:.2}").map_err(|e| format!("Write error: {e}"))?;
     }
 
     Ok(path.display().to_string())
@@ -165,8 +193,11 @@ fn export_tracking_csv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "time_s,snr_db,power_dbfs,noise_floor_db,freq_offset_hz")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(
+        file,
+        "time_s,snr_db,power_dbfs,noise_floor_db,freq_offset_hz"
+    )
+    .map_err(|e| format!("Write error: {e}"))?;
 
     let len = snap.snr.len();
     for i in 0..len {
@@ -182,21 +213,21 @@ fn export_tracking_csv(
     Ok(path.display().to_string())
 }
 
-fn export_messages_csv(
-    path: &PathBuf,
-    msgs: &[DecodedMessageExport],
-) -> Result<String, String> {
+fn export_messages_csv(path: &PathBuf, msgs: &[DecodedMessageExport]) -> Result<String, String> {
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "elapsed_ms,decoder,summary")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "elapsed_ms,decoder,summary").map_err(|e| format!("Write error: {e}"))?;
 
     for msg in msgs {
         // Escape commas and quotes in summary
         let escaped = msg.summary.replace('"', "\"\"");
-        writeln!(file, "{},\"{}\",\"{}\"", msg.elapsed_ms, msg.decoder, escaped)
-            .map_err(|e| format!("Write error: {e}"))?;
+        writeln!(
+            file,
+            "{},\"{}\",\"{}\"",
+            msg.elapsed_ms, msg.decoder, escaped
+        )
+        .map_err(|e| format!("Write error: {e}"))?;
     }
 
     Ok(path.display().to_string())
@@ -210,12 +241,15 @@ fn export_detections_csv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "frequency_hz,power_dbfs,snr_db")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "frequency_hz,power_dbfs,snr_db").map_err(|e| format!("Write error: {e}"))?;
 
     for det in detections {
-        writeln!(file, "{:.1},{:.2},{:.2}", det.frequency_hz, det.power_db, det.snr_db)
-            .map_err(|e| format!("Write error: {e}"))?;
+        writeln!(
+            file,
+            "{:.1},{:.2},{:.2}",
+            det.frequency_hz, det.power_db, det.snr_db
+        )
+        .map_err(|e| format!("Write error: {e}"))?;
     }
 
     Ok(path.display().to_string())
@@ -228,8 +262,7 @@ fn export_measurement_csv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "metric,value,unit")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "metric,value,unit").map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "bandwidth_3db,{:.1},Hz", report.bandwidth_3db_hz)
         .map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "bandwidth_6db,{:.1},Hz", report.bandwidth_6db_hz)
@@ -244,8 +277,7 @@ fn export_measurement_csv(
         .map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "acpr_upper,{:.2},dBc", report.acpr_upper_dbc)
         .map_err(|e| format!("Write error: {e}"))?;
-    writeln!(file, "papr,{:.2},dB", report.papr_db)
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "papr,{:.2},dB", report.papr_db).map_err(|e| format!("Write error: {e}"))?;
 
     Ok(path.display().to_string())
 }
@@ -263,16 +295,14 @@ fn export_spectrum_tsv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "frequency_hz\tpower_dbfs")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "frequency_hz\tpower_dbfs").map_err(|e| format!("Write error: {e}"))?;
 
     let n = spectrum_db.len();
     let bin_width = sample_rate / n as f64;
 
     for (i, &db) in spectrum_db.iter().enumerate() {
         let freq = center_freq + (i as f64 - n as f64 / 2.0) * bin_width;
-        writeln!(file, "{freq:.1}\t{db:.2}")
-            .map_err(|e| format!("Write error: {e}"))?;
+        writeln!(file, "{freq:.1}\t{db:.2}").map_err(|e| format!("Write error: {e}"))?;
     }
 
     Ok(path.display().to_string())
@@ -285,8 +315,11 @@ fn export_tracking_tsv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "time_s\tsnr_db\tpower_dbfs\tnoise_floor_db\tfreq_offset_hz")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(
+        file,
+        "time_s\tsnr_db\tpower_dbfs\tnoise_floor_db\tfreq_offset_hz"
+    )
+    .map_err(|e| format!("Write error: {e}"))?;
 
     let len = snap.snr.len();
     for i in 0..len {
@@ -302,15 +335,11 @@ fn export_tracking_tsv(
     Ok(path.display().to_string())
 }
 
-fn export_messages_tsv(
-    path: &PathBuf,
-    msgs: &[DecodedMessageExport],
-) -> Result<String, String> {
+fn export_messages_tsv(path: &PathBuf, msgs: &[DecodedMessageExport]) -> Result<String, String> {
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "elapsed_ms\tdecoder\tsummary")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "elapsed_ms\tdecoder\tsummary").map_err(|e| format!("Write error: {e}"))?;
 
     for msg in msgs {
         writeln!(file, "{}\t{}\t{}", msg.elapsed_ms, msg.decoder, msg.summary)
@@ -328,12 +357,15 @@ fn export_detections_tsv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "frequency_hz\tpower_dbfs\tsnr_db")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "frequency_hz\tpower_dbfs\tsnr_db").map_err(|e| format!("Write error: {e}"))?;
 
     for det in detections {
-        writeln!(file, "{:.1}\t{:.2}\t{:.2}", det.frequency_hz, det.power_db, det.snr_db)
-            .map_err(|e| format!("Write error: {e}"))?;
+        writeln!(
+            file,
+            "{:.1}\t{:.2}\t{:.2}",
+            det.frequency_hz, det.power_db, det.snr_db
+        )
+        .map_err(|e| format!("Write error: {e}"))?;
     }
 
     Ok(path.display().to_string())
@@ -346,8 +378,7 @@ fn export_measurement_tsv(
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
 
-    writeln!(file, "metric\tvalue\tunit")
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "metric\tvalue\tunit").map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "bandwidth_3db\t{:.1}\tHz", report.bandwidth_3db_hz)
         .map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "bandwidth_6db\t{:.1}\tHz", report.bandwidth_6db_hz)
@@ -356,14 +387,17 @@ fn export_measurement_tsv(
         .map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "obw_percent\t{:.1}\t%", report.obw_percent)
         .map_err(|e| format!("Write error: {e}"))?;
-    writeln!(file, "channel_power\t{:.2}\tdBFS", report.channel_power_dbfs)
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(
+        file,
+        "channel_power\t{:.2}\tdBFS",
+        report.channel_power_dbfs
+    )
+    .map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "acpr_lower\t{:.2}\tdBc", report.acpr_lower_dbc)
         .map_err(|e| format!("Write error: {e}"))?;
     writeln!(file, "acpr_upper\t{:.2}\tdBc", report.acpr_upper_dbc)
         .map_err(|e| format!("Write error: {e}"))?;
-    writeln!(file, "papr\t{:.2}\tdB", report.papr_db)
-        .map_err(|e| format!("Write error: {e}"))?;
+    writeln!(file, "papr\t{:.2}\tdB", report.papr_db).map_err(|e| format!("Write error: {e}"))?;
 
     Ok(path.display().to_string())
 }
@@ -389,37 +423,33 @@ fn db_to_color(db: f32, min_db: f32, max_db: f32) -> Rgb<u8> {
         (1.0, 1.0 - s * 0.7, 0.0) // yellow → red
     };
 
-    Rgb([
-        (r * 255.0) as u8,
-        (g * 255.0) as u8,
-        (b * 255.0) as u8,
-    ])
+    Rgb([(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8])
 }
 
 /// Simple 3x5 pixel digit glyphs for axis labels (no font crate needed).
 const DIGIT_GLYPHS: [[u8; 15]; 11] = [
     // 0
-    [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1],
+    [1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1],
     // 1
-    [0,1,0, 1,1,0, 0,1,0, 0,1,0, 1,1,1],
+    [0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1],
     // 2
-    [1,1,1, 0,0,1, 1,1,1, 1,0,0, 1,1,1],
+    [1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1],
     // 3
-    [1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1],
+    [1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1],
     // 4
-    [1,0,1, 1,0,1, 1,1,1, 0,0,1, 0,0,1],
+    [1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1],
     // 5
-    [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1],
+    [1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1],
     // 6
-    [1,1,1, 1,0,0, 1,1,1, 1,0,1, 1,1,1],
+    [1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1],
     // 7
-    [1,1,1, 0,0,1, 0,1,0, 0,1,0, 0,1,0],
+    [1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0],
     // 8
-    [1,1,1, 1,0,1, 1,1,1, 1,0,1, 1,1,1],
+    [1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1],
     // 9
-    [1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1],
+    [1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1],
     // . (dot)
-    [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,1,0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
 ];
 
 /// Draw a small text string at (x, y) using 3x5 glyphs.
@@ -493,7 +523,10 @@ fn export_spectrum_png(
 
     // Compute dB range
     let min_db = spectrum_db.iter().copied().fold(f32::INFINITY, f32::min);
-    let max_db = spectrum_db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let max_db = spectrum_db
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
     let db_range = (max_db - min_db).max(1.0);
     let db_floor = min_db - db_range * 0.05;
     let db_ceil = max_db + db_range * 0.05;
@@ -509,7 +542,13 @@ fn export_spectrum_png(
         }
         // Power label
         let db_val = db_ceil - (effective_range * i as f32 / 5.0);
-        draw_text(&mut img, 2, y.saturating_sub(2), &format!("{db_val:.0}"), text_color);
+        draw_text(
+            &mut img,
+            2,
+            y.saturating_sub(2),
+            &format!("{db_val:.0}"),
+            text_color,
+        );
     }
 
     for i in 0..=4 {
@@ -522,7 +561,13 @@ fn export_spectrum_png(
         // Frequency label
         let freq = center_freq - sample_rate / 2.0 + sample_rate * i as f64 / 4.0;
         let label = format!("{:.1}", freq / 1e6);
-        draw_text(&mut img, x.saturating_sub(10), height - margin_bottom + 5, &label, text_color);
+        draw_text(
+            &mut img,
+            x.saturating_sub(10),
+            height - margin_bottom + 5,
+            &label,
+            text_color,
+        );
     }
 
     // Draw spectrum trace
@@ -608,7 +653,11 @@ fn export_waterfall_png(
 
 fn export_json(path: &PathBuf, content: &ExportContent) -> Result<String, String> {
     let json = match content {
-        ExportContent::Spectrum { spectrum_db, sample_rate, center_freq } => {
+        ExportContent::Spectrum {
+            spectrum_db,
+            sample_rate,
+            center_freq,
+        } => {
             serde_json::json!({
                 "type": "spectrum",
                 "center_freq_hz": center_freq,
@@ -626,13 +675,20 @@ fn export_json(path: &PathBuf, content: &ExportContent) -> Result<String, String
         ExportContent::DecodedMessages(msgs) => {
             serde_json::to_value(msgs).map_err(|e| format!("Serialize error: {e}"))?
         }
-        ExportContent::Detections { detections, center_freq } => {
+        ExportContent::Detections {
+            detections,
+            center_freq,
+        } => {
             serde_json::json!({
                 "center_freq_hz": center_freq,
                 "detections": detections,
             })
         }
-        ExportContent::Waterfall { rows, sample_rate, center_freq } => {
+        ExportContent::Waterfall {
+            rows,
+            sample_rate,
+            center_freq,
+        } => {
             serde_json::json!({
                 "type": "waterfall",
                 "center_freq_hz": center_freq,
@@ -761,7 +817,9 @@ mod tests {
     #[test]
     fn png_spectrum_export() {
         let path = temp_path("test_spectrum.png");
-        let spectrum: Vec<f32> = (0..2048).map(|i| -80.0 + 40.0 * (i as f32 * 0.01).sin()).collect();
+        let spectrum: Vec<f32> = (0..2048)
+            .map(|i| -80.0 + 40.0 * (i as f32 * 0.01).sin())
+            .collect();
         let result = export_to_file(&ExportConfig {
             path: path.clone(),
             format: ExportFormat::Png,
@@ -821,14 +879,12 @@ mod tests {
     #[test]
     fn export_decoded_messages_csv() {
         let path = temp_path("test_messages.csv");
-        let msgs = vec![
-            DecodedMessageExport {
-                decoder: "pocsag".to_string(),
-                elapsed_ms: 1000,
-                summary: "Test message with, comma".to_string(),
-                fields: BTreeMap::new(),
-            },
-        ];
+        let msgs = vec![DecodedMessageExport {
+            decoder: "pocsag".to_string(),
+            elapsed_ms: 1000,
+            summary: "Test message with, comma".to_string(),
+            fields: BTreeMap::new(),
+        }];
         let result = export_to_file(&ExportConfig {
             path: path.clone(),
             format: ExportFormat::Csv,

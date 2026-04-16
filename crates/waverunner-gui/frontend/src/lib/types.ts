@@ -112,6 +112,8 @@ export interface DemodConfig {
   squelch: number | null;
   deemph_us: number | null;
   output_wav: string | null;
+  emit_visualization?: boolean;
+  spectrum_update_interval_blocks?: number;
 }
 
 // Analysis types

@@ -147,7 +147,7 @@ pub fn cfar_detect(
             }
             CfarMethod::OrderedStatistic { rank } => {
                 let mut all: Vec<f32> = leading.iter().chain(lagging.iter()).copied().collect();
-                all.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                all.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let idx = (*rank).min(all.len().saturating_sub(1));
                 all[idx]
             }
@@ -212,8 +212,8 @@ pub fn db_to_linear(spectrum_db: &[f32]) -> Vec<f32> {
 /// Ratio of geometric mean to arithmetic mean of the power spectrum.
 /// Range: 0 (pure tone) to 1 (white noise).
 ///
-/// SF = exp(1/N · Σ ln(S[k])) / (1/N · Σ S[k])
-///    = (∏ S[k])^(1/N) / mean(S[k])
+/// `SF = exp(1/N · Σ ln(S[k])) / (1/N · Σ S[k])`
+///    `= (∏ S[k])^(1/N) / mean(S[k])`
 ///
 /// This is a powerful signal detection statistic because white noise
 /// has SF ≈ 1 regardless of noise level, while any deterministic signal
@@ -243,7 +243,7 @@ pub fn spectral_flatness(spectrum_linear: &[f32]) -> f32 {
 /// The kurtosis of a Gaussian process is 2 (for complex samples).
 /// Signals with structure (deterministic components) have kurtosis ≠ 2.
 ///
-/// Excess kurtosis κ = E[|x|⁴] / E[|x|²]² - 2
+/// Excess kurtosis `κ = E[|x|⁴] / E[|x|²]² - 2`
 ///
 /// κ = 0: Gaussian (noise only)
 /// κ < 0: Sub-Gaussian (constant-envelope signals like FM, PSK)
@@ -277,9 +277,9 @@ pub fn complex_kurtosis(samples: &[Sample]) -> f32 {
 
 /// Energy detection (Neyman-Pearson).
 ///
-/// Tests H₀: x[n] = w[n] (noise only) vs H₁: x[n] = s[n] + w[n] (signal present)
+/// Tests H₀: `x[n] = w[n]` (noise only) vs H₁: `x[n] = s[n] + w[n]` (signal present)
 ///
-/// Test statistic: T = (1/N) · Σ|x[n]|²
+/// Test statistic: `T = (1/N) · Σ|x[n]|²`
 ///
 /// Under H₀ with known noise variance σ²:
 ///   2N·T/σ² ~ χ²(2N) ≈ N(2N, 4N) for large N

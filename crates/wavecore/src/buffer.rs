@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+//! Bounded sample pipeline with backpressure-aware producer/consumer channels.
+
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use tracing::warn;

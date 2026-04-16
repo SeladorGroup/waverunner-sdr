@@ -38,8 +38,7 @@ async fn main() -> Result<()> {
         _ => "trace",
     };
 
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
 
     if cli.json_log {
         tracing_subscriber::fmt()
@@ -47,9 +46,7 @@ async fn main() -> Result<()> {
             .json()
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
     commands::execute(cli.command, cli.device).await
