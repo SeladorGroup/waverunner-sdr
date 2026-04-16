@@ -235,7 +235,9 @@ pub fn decoder_descriptor(name: &str) -> Option<&'static DecoderDescriptor> {
 /// Register all decoder factories.
 pub fn register_all(registry: &mut DecoderRegistry) {
     // ---- redsea bridge ----
-    registry.register("rds", || Box::new(rds::RdsDecoder::new(2_048_000.0)));
+    registry.register("rds", || {
+        Box::new(rds::RdsDecoder::new(rds::RDS_DECODER_SAMPLE_RATE_HZ))
+    });
 
     // ---- multimon-ng bridges ----
     registry.register("pocsag", || {

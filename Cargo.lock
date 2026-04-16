@@ -5367,7 +5367,7 @@ dependencies = [
 
 [[package]]
 name = "wavecore"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cpal",
  "criterion",
@@ -5387,14 +5387,14 @@ dependencies = [
 
 [[package]]
 name = "waveplugins"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "wavecore",
 ]
 
 [[package]]
 name = "waverunner-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -5409,7 +5409,7 @@ dependencies = [
 
 [[package]]
 name = "waverunner-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -5424,7 +5424,7 @@ dependencies = [
 
 [[package]]
 name = "waverunner-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -5439,7 +5439,7 @@ dependencies = [
 
 [[package]]
 name = "waveviz"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "thiserror 2.0.18",

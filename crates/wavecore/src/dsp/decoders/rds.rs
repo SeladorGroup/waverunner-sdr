@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::dsp::decoder::{DecoderPlugin, DecoderRequirements};
+use crate::dsp::resample::PolyphaseResampler;
 use crate::session::DecodedMessage;
 use crate::types::Sample;
 
@@ -19,35 +20,48 @@ use super::subprocess::{
 };
 use super::tools;
 
+/// Preferred MPX sample rate for `redsea`.
+pub const REDSEA_INPUT_SAMPLE_RATE_HZ: f64 = 171_000.0;
+/// Hardware capture rate for broadcast FM before channelization.
+pub const RDS_CAPTURE_SAMPLE_RATE_HZ: f64 = 1_024_000.0;
+/// Decoder input rate after DDC/channel filtering.
+pub const RDS_DECODER_SAMPLE_RATE_HZ: f64 = 256_000.0;
+/// Broadcast FM channel bandwidth wide enough for stereo and the 57 kHz RDS subcarrier.
+pub const RDS_CHANNEL_BANDWIDTH_HZ: f64 = 180_000.0;
+
 pub struct RdsDecoder {
-    sample_rate: f64,
+    input_sample_rate: f64,
     bridge: SubprocessBridge,
     config: Option<SubprocessConfig>,
     prev_sample: Sample,
+    audio_resampler: Option<PolyphaseResampler>,
 }
 
 impl RdsDecoder {
-    pub fn new(sample_rate: f64) -> Self {
-        let config = SubprocessConfig {
+    pub fn new(input_sample_rate: f64) -> Self {
+        Self {
+            input_sample_rate,
+            bridge: SubprocessBridge::new(),
+            config: Some(Self::make_config()),
+            prev_sample: Sample::new(0.0, 0.0),
+            audio_resampler: make_audio_resampler(input_sample_rate),
+        }
+    }
+
+    fn make_config() -> SubprocessConfig {
+        SubprocessConfig {
             command: tools::resolve_tool_command("redsea")
                 .unwrap_or("redsea")
                 .to_string(),
             args: vec![
                 "-r".to_string(),
-                sample_rate.to_string(),
-                "-p".to_string(), // show partial data
-                "-u".to_string(), // RBDS mode (works for both)
+                REDSEA_INPUT_SAMPLE_RATE_HZ.to_string(),
+                "-p".to_string(),
+                "-u".to_string(),
             ],
             input_format: InputFormat::S16LeAudio,
             output_parser: Box::new(RedseaParser),
             thread_name: "redsea-reader".to_string(),
-        };
-
-        Self {
-            sample_rate,
-            bridge: SubprocessBridge::new(),
-            config: Some(config),
-            prev_sample: Sample::new(0.0, 0.0),
         }
     }
 }
@@ -60,8 +74,8 @@ impl DecoderPlugin for RdsDecoder {
     fn requirements(&self) -> DecoderRequirements {
         DecoderRequirements {
             center_frequency: 0.0, // works at any FM broadcast frequency
-            sample_rate: self.sample_rate,
-            bandwidth: 200_000.0,
+            sample_rate: self.input_sample_rate,
+            bandwidth: RDS_CHANNEL_BANDWIDTH_HZ,
             wants_iq: true,
         }
     }
@@ -104,6 +118,12 @@ impl DecoderPlugin for RdsDecoder {
 
         // FM demodulate IQ → audio, then convert to S16LE
         let audio = fm_demod(samples, &mut self.prev_sample);
+        let audio = if let Some(ref mut resampler) = self.audio_resampler {
+            let mono: Vec<Sample> = audio.iter().map(|&s| Sample::new(s, 0.0)).collect();
+            resampler.process(&mono).into_iter().map(|s| s.re).collect()
+        } else {
+            audio
+        };
         let s16le = audio_to_s16le(&audio);
 
         if !self.bridge.write_stdin(&s16le) {
@@ -127,21 +147,18 @@ impl DecoderPlugin for RdsDecoder {
     fn reset(&mut self) {
         self.bridge.reset();
         self.prev_sample = Sample::new(0.0, 0.0);
-        // Recreate config so subprocess can be restarted
-        self.config = Some(SubprocessConfig {
-            command: tools::resolve_tool_command("redsea")
-                .unwrap_or("redsea")
-                .to_string(),
-            args: vec![
-                "-r".to_string(),
-                self.sample_rate.to_string(),
-                "-p".to_string(),
-                "-u".to_string(),
-            ],
-            input_format: InputFormat::S16LeAudio,
-            output_parser: Box::new(RedseaParser),
-            thread_name: "redsea-reader".to_string(),
-        });
+        self.audio_resampler = make_audio_resampler(self.input_sample_rate);
+        self.config = Some(Self::make_config());
+    }
+}
+
+fn make_audio_resampler(iq_sample_rate: f64) -> Option<PolyphaseResampler> {
+    let input_rate = iq_sample_rate.round() as usize;
+    let output_rate = REDSEA_INPUT_SAMPLE_RATE_HZ as usize;
+    if input_rate == output_rate {
+        None
+    } else {
+        Some(PolyphaseResampler::new(output_rate, input_rate, 128, 0.0))
     }
 }
 
@@ -169,31 +186,25 @@ impl OutputParser for RedseaParser {
         }
 
         // Program Service name (station name)
-        if let Some(ps) = map.get("ps").and_then(|v| v.as_str()) {
-            let ps = ps.trim();
-            if !ps.is_empty() {
-                fields.insert("ps".to_string(), ps.to_string());
-                parts.push(ps.to_string());
-            }
+        if let Some(ps) = first_non_empty_str(map, &["ps", "partial_ps"]) {
+            fields.insert("ps".to_string(), ps.to_string());
+            parts.push(ps.to_string());
         }
 
         // Radio Text
-        if let Some(rt) = map.get("radiotext").and_then(|v| v.as_str()) {
-            let rt = rt.trim();
-            if !rt.is_empty() {
-                fields.insert("radiotext".to_string(), rt.to_string());
-                parts.push(format!("RT: {rt}"));
-            }
+        if let Some(rt) = first_non_empty_str(map, &["radiotext", "partial_radiotext"]) {
+            fields.insert("radiotext".to_string(), rt.to_string());
+            parts.push(format!("RT: {rt}"));
         }
 
         // Program Type
-        if let Some(pty) = map.get("prog_type").and_then(|v| v.as_str()) {
+        if let Some(pty) = first_non_empty_str(map, &["prog_type"]) {
             fields.insert("prog_type".to_string(), pty.to_string());
             parts.push(pty.to_string());
         }
 
         // Callsign (RBDS)
-        if let Some(call) = map.get("callsign").and_then(|v| v.as_str()) {
+        if let Some(call) = first_non_empty_str(map, &["callsign"]) {
             fields.insert("callsign".to_string(), call.to_string());
             parts.push(call.to_string());
         }
@@ -239,6 +250,16 @@ impl OutputParser for RedseaParser {
     }
 }
 
+fn first_non_empty_str<'a>(
+    map: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter()
+        .filter_map(|key| map.get(*key).and_then(|value| value.as_str()))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +284,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_rds_partial_fields() {
+        let mut parser = RedseaParser;
+        let json = r#"{"pi":"0xD206","partial_ps":"RADIO S","partial_radiotext":"Now playing","prog_type":"","callsign":""}"#;
+        let msg = parser.parse_line(json).unwrap();
+        assert!(msg.summary.contains("RADIO S"));
+        assert!(msg.summary.contains("Now playing"));
+        assert!(!msg.summary.ends_with(" | "));
+    }
+
+    #[test]
     fn parse_rds_skip_non_json() {
         let mut parser = RedseaParser;
         assert!(parser.parse_line("not json").is_none());
@@ -271,15 +302,15 @@ mod tests {
 
     #[test]
     fn decoder_requirements() {
-        let decoder = RdsDecoder::new(171_000.0);
+        let decoder = RdsDecoder::new(RDS_DECODER_SAMPLE_RATE_HZ);
         let req = decoder.requirements();
         assert!(req.wants_iq);
-        assert!((req.sample_rate - 171_000.0).abs() < 1.0);
+        assert!((req.sample_rate - RDS_DECODER_SAMPLE_RATE_HZ).abs() < 1.0);
     }
 
     #[test]
     fn decoder_name() {
-        let decoder = RdsDecoder::new(171_000.0);
+        let decoder = RdsDecoder::new(RDS_DECODER_SAMPLE_RATE_HZ);
         assert_eq!(decoder.name(), "rds");
     }
 }

@@ -105,6 +105,10 @@ struct ProtocolConfig {
     description: String,
 }
 
+fn minimum_capture_rate(req_sample_rate: f64) -> f64 {
+    req_sample_rate.max(250_000.0)
+}
+
 fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
     match protocol {
         DecodeProtocol::Pocsag(args) => {
@@ -115,8 +119,6 @@ fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
             };
             Some(ProtocolConfig {
                 decoder_name: name.to_string(),
-                // POCSAG needs enough bandwidth for ±4.5 kHz FSK.
-                // 22050 Hz gives ~5× oversampling at 1200 baud.
                 default_sample_rate: 2_048_000.0,
                 frequency: args.frequency,
                 description: "POCSAG pager".to_string(),
@@ -124,16 +126,13 @@ fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
         }
         DecodeProtocol::Adsb(args) => Some(ProtocolConfig {
             decoder_name: "adsb".to_string(),
-            // ADS-B PPM at 1 Mbps needs ≥2 MS/s for Nyquist
-            default_sample_rate: 2_000_000.0,
+            default_sample_rate: wavecore::dsp::decoders::adsb::ADSB_SAMPLE_RATE_HZ,
             frequency: args.frequency,
             description: "ADS-B 1090 MHz".to_string(),
         }),
         DecodeProtocol::Rds(args) => Some(ProtocolConfig {
             decoder_name: "rds".to_string(),
-            // RDS needs raw IQ with FM discriminator, at a rate high enough
-            // for the 57 kHz subcarrier. 2.048 MS/s is standard RTL-SDR rate.
-            default_sample_rate: 2_048_000.0,
+            default_sample_rate: wavecore::dsp::decoders::rds::RDS_CAPTURE_SAMPLE_RATE_HZ,
             frequency: args.frequency,
             description: "RDS/RBDS".to_string(),
         }),
@@ -145,7 +144,7 @@ fn protocol_config(protocol: &DecodeProtocol) -> Option<ProtocolConfig> {
             let req = decoder.requirements();
             Some(ProtocolConfig {
                 decoder_name: args.name.clone(),
-                default_sample_rate: req.sample_rate.max(250_000.0),
+                default_sample_rate: minimum_capture_rate(req.sample_rate),
                 frequency: args.frequency,
                 description: args.name.clone(),
             })
@@ -394,4 +393,20 @@ fn print_message_json(msg: &DecodedMessage, seq: u64) {
 
     let json = serde_json::Value::Object(obj);
     println!("{}", json);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::minimum_capture_rate;
+
+    #[test]
+    fn keeps_native_high_rate_decoders_unchanged() {
+        assert!((minimum_capture_rate(2_400_000.0) - 2_400_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn preserves_existing_generic_floor_for_other_low_rate_decoders() {
+        assert!((minimum_capture_rate(22_050.0) - 250_000.0).abs() < 1.0);
+        assert!((minimum_capture_rate(48_000.0) - 250_000.0).abs() < 1.0);
+    }
 }

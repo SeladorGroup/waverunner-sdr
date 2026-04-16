@@ -150,7 +150,7 @@ As of the beta hardening pass on **April 16, 2026**, the known gaps are:
 
 - RTL-SDR is the only hardware backend wired and tested end to end.
 - `dump1090_rs` is still unsupported by the ADS-B stdin bridge. Arch users need a compatible `dump1090` / `dump1090-fa` / `readsb` backend instead.
-- `rds` and `adsb` now start cleanly on the live test host (`athena`), but the current antenna placement there produced no positive payload during soak. Direct control runs with plain `rtl_fm | redsea` and plain `dump1090` from the same host also produced no payload, so treat those two paths as **environment-limited and not positively validated on live RF** yet.
+- `rds` and `adsb` are now positively validated on live RF on the `athena` test host, but only on the exact toolchain used there (`redsea` plus `dump1090-fa`). They should still be treated as backend-dependent features, not generic guarantees across every distro package variant.
 - The least-proven decoder ranges in this beta are the native-only paths around **137 MHz** (`noaa-apt-*`) and **161.975 / 162.025 MHz** (`ais-*`). They do not have an alternate external backend wired into WaveRunner today, and they did not receive positive live-payload validation in this hardening pass.
 - `ACARS` is not implemented yet and is intentionally not advertised as supported.
 - Weather alert coverage is currently the generic `eas` / `multimon-ng` path, not a dedicated NOAA Weather Radio workflow.

@@ -37,6 +37,15 @@ cd /path/to/waverunner-sdr && cargo package --allow-dirty --workspace --no-verif
 
 Run `cargo fmt --all` before committing.
 
+## AI-Assisted Changes
+
+AI assistance is acceptable, but generated code is not exempt from normal engineering review.
+
+- Follow the repository guidance in [.github/copilot-instructions.md](.github/copilot-instructions.md).
+- Review generated changes for readability, false generality, dead parameters, and unchecked dependency additions.
+- Do not merge AI-assisted changes that are harder to explain than to rewrite.
+- Verify runtime decoder changes against real captures or live hardware, not just unit tests.
+
 ## Release Validation
 
 Before tagging a GitHub release:

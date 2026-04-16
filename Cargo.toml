@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-only"
@@ -71,6 +71,6 @@ tauri = { version = "2" }
 tauri-build = { version = "2", features = [] }
 
 # Internal crates
-wavecore = { version = "0.1.0", path = "crates/wavecore" }
-waveplugins = { version = "0.1.0", path = "crates/waveplugins" }
-waveviz = { version = "0.1.0", path = "crates/waveviz" }
+wavecore = { version = "0.1.1", path = "crates/wavecore" }
+waveplugins = { version = "0.1.1", path = "crates/waveplugins" }
+waveviz = { version = "0.1.1", path = "crates/waveviz" }

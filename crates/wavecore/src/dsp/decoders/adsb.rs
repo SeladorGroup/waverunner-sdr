@@ -19,6 +19,9 @@ use super::subprocess::{
 };
 use super::tools;
 
+pub const ADSB_SAMPLE_RATE_HZ: f64 = 2_400_000.0;
+pub const ADSB_CHANNEL_BANDWIDTH_HZ: f64 = 2_000_000.0;
+
 pub struct AdsbDecoder {
     sample_rate: f64,
     bridge: SubprocessBridge,
@@ -33,7 +36,7 @@ impl Default for AdsbDecoder {
 
 impl AdsbDecoder {
     pub fn new() -> Self {
-        let sample_rate = 2_000_000.0;
+        let sample_rate = ADSB_SAMPLE_RATE_HZ;
         let config = Self::make_config();
         Self {
             sample_rate,
@@ -70,7 +73,7 @@ impl DecoderPlugin for AdsbDecoder {
         DecoderRequirements {
             center_frequency: 1_090_000_000.0,
             sample_rate: self.sample_rate,
-            bandwidth: 2_000_000.0,
+            bandwidth: ADSB_CHANNEL_BANDWIDTH_HZ,
             wants_iq: true,
         }
     }
@@ -259,6 +262,6 @@ mod tests {
         let req = decoder.requirements();
         assert!(req.wants_iq);
         assert!((req.center_frequency - 1.09e9).abs() < 1.0);
-        assert!((req.sample_rate - 2e6).abs() < 1.0);
+        assert!((req.sample_rate - ADSB_SAMPLE_RATE_HZ).abs() < 1.0);
     }
 }

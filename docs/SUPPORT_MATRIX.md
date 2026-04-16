@@ -64,8 +64,8 @@ File-based replay (`ReplayDevice`) works on all platforms without hardware:
 |---|---|---|
 | `tune` / `scan` / `record` / `listen` | Live-soaked | Verified on a real RTL-SDR Blog v4 on `athena`; `listen` overflow regression was fixed during hardening |
 | `rtl433` | Live payload observed | Decoded TPMS traffic on `athena` during soak |
-| `rds` | Backend stable, no live payload observed | `redsea` is integrated and now installed on `athena`, but neither WaveRunner nor direct `rtl_fm \| redsea` control runs produced RDS payload with the current antenna placement |
-| `adsb` | Backend stable, no live payload observed | `dump1090` bridge now starts cleanly with `UC8` input; neither WaveRunner nor direct `dump1090` control runs produced aircraft payload on the current test host / antenna placement |
+| `rds` | Live payload observed | Positive live decode on `athena` at `94.9 MHz`; direct `rtl_fm \| redsea` control and WaveRunner both produced RDS groups |
+| `adsb` | Live payload observed | Positive live decode on `athena`; the stdin bridge required a `2.4 MS/s` capture path with a `dump1090-fa` compatible backend |
 | `pocsag*` / `aprs` / `dtmf` / `eas` / `flex` | Runtime verified | `multimon-ng` bridge starts cleanly; no positive live payload was captured in the current soak window |
 | `ais-*` | Runtime verified, native-only | Decoder path stayed up, but no positive live payload was observed in this soak window |
 | `noaa-apt-*` | Not live-soaked in this pass | Needs a real satellite pass for positive validation; still a native-only path in this repo |
