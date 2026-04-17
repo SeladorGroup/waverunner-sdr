@@ -6,7 +6,21 @@ mod state;
 
 use state::AppState;
 
+#[cfg(target_os = "linux")]
+fn apply_linux_webkit_workarounds() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // Set this before GTK/WebKit initialization to avoid the known blank-window
+        // failure mode seen on some Linux GPU/driver stacks.
+        unsafe {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    apply_linux_webkit_workarounds();
+
     tracing_subscriber::fmt::init();
 
     tauri::Builder::default()
@@ -28,6 +42,7 @@ fn main() {
             commands::inspect_capture,
             commands::list_recent_captures,
             commands::remove_capture,
+            commands::update_capture_metadata,
             commands::list_bookmarks,
             commands::save_current_bookmark,
             commands::remove_bookmark,

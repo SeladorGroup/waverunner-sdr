@@ -135,6 +135,11 @@ fn context_from_status(
         format: format_to_metadata(path),
         device: origin.device_name().to_string(),
         source: origin.capture_source(),
+        label: None,
+        notes: None,
+        tags: Vec::new(),
+        demod_mode: None,
+        decoder: None,
         started: true,
     })
 }
@@ -150,11 +155,11 @@ fn finalize_recording(context: RecordingContext, total_samples: u64) -> Result<(
         duration_secs: Some(context.started_at.elapsed().as_secs_f64()),
         device: context.device,
         samples_written: total_samples,
-        label: None,
-        notes: None,
-        tags: Vec::new(),
-        demod_mode: None,
-        decoder: None,
+        label: context.label,
+        notes: context.notes,
+        tags: context.tags,
+        demod_mode: context.demod_mode,
+        decoder: context.decoder,
         timeline_path: None,
         report_path: None,
     };

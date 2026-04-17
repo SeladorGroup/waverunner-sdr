@@ -41,6 +41,11 @@ pub struct RecordingContext {
     pub format: String,
     pub device: String,
     pub source: CaptureSource,
+    pub label: Option<String>,
+    pub notes: Option<String>,
+    pub tags: Vec<String>,
+    pub demod_mode: Option<String>,
+    pub decoder: Option<String>,
     pub started: bool,
 }
 

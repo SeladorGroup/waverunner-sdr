@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import {
     frequency, gain, connected, demodMode, sampleRate,
-    enabledDecoders, recordingActive,
+    enabledDecoders, recordingActive, recordingPath,
     activeMode, modeStatus,
     cmdTune, cmdSetGain, cmdStartDemod, cmdStopDemod,
     cmdEnableDecoder, cmdDisableDecoder,
@@ -54,6 +54,12 @@
   let gainAuto = true;
   let selectedProfile = '';
   let lastKnownActiveMode = '';
+  let recordFormat = 'raw';
+  let recordLabel = '';
+  let recordNotes = '';
+  let recordTags = '';
+  let recordBusy = false;
+  let recordError = '';
 
   $: if ($demodMode && selectedDemod !== $demodMode) {
     selectedDemod = $demodMode;
@@ -165,14 +171,49 @@
     }
   }
 
+  function parseTagList(value: string): string[] {
+    return value
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0);
+  }
+
   async function toggleRecord() {
     if ($recordingActive) {
-      await cmdStopRecord();
+      try {
+        recordError = '';
+        await cmdStopRecord();
+      } catch (e) {
+        recordError = String(e);
+      }
       return;
     }
 
-    const path = await generateCapturePath('raw', 'gui');
-    await cmdStartRecord(path, 'cf32');
+    recordBusy = true;
+    recordError = '';
+    try {
+      const label = recordLabel.trim() || null;
+      const notes = recordNotes.trim() || null;
+      const tags = parseTagList(recordTags);
+      const path = await generateCapturePath(recordFormat, label ?? 'gui');
+      const runtimeFormat = recordFormat === 'raw' ? 'cf32' : recordFormat;
+      const decoder = activeDecoder || null;
+      const liveDemodMode =
+        $demodMode && $demodMode !== 'OFF' ? $demodMode.toLowerCase() : null;
+      await cmdStartRecord(
+        path,
+        runtimeFormat,
+        label,
+        notes,
+        tags,
+        liveDemodMode,
+        decoder,
+      );
+    } catch (e) {
+      recordError = String(e);
+    } finally {
+      recordBusy = false;
+    }
   }
 </script>
 
@@ -291,13 +332,52 @@
 
   <section>
     <h3>Record</h3>
-    <button
-      onclick={toggleRecord}
-      disabled={!$connected}
-      class:danger={$recordingActive}
-    >
-      {$recordingActive ? 'Stop' : 'Record'}
-    </button>
+    <div class="record-grid">
+      <select bind:value={recordFormat} disabled={!$connected || $recordingActive}>
+        <option value="raw">Raw CF32</option>
+        <option value="wav">WAV</option>
+        <option value="sigmf">SigMF</option>
+      </select>
+      <input
+        type="text"
+        placeholder="Label"
+        bind:value={recordLabel}
+        disabled={!$connected || $recordingActive}
+      />
+      <textarea
+        rows="3"
+        placeholder="Notes for this capture"
+        bind:value={recordNotes}
+        disabled={!$connected || $recordingActive}
+      ></textarea>
+      <input
+        type="text"
+        placeholder="tags, comma, separated"
+        bind:value={recordTags}
+        disabled={!$connected || $recordingActive}
+      />
+      <button
+        onclick={toggleRecord}
+        disabled={!$connected || recordBusy}
+        class:danger={$recordingActive}
+      >
+        {$recordingActive ? 'Stop Recording' : 'Start Recording'}
+      </button>
+    </div>
+    {#if $recordingPath}
+      <div class="mode-status record-path">{$recordingPath}</div>
+    {/if}
+    {#if $recordingActive}
+      <div class="mode-status">
+        saving {$demodMode !== 'OFF' ? $demodMode.toUpperCase() : 'IQ only'}
+        {#if activeDecoder}
+          | decoder {activeDecoder}
+        {/if}
+      </div>
+    {/if}
+    {#if recordError}
+      <div class="mode-status error-text">{recordError}</div>
+    {/if}
   </section>
 </div>
 
@@ -327,10 +407,16 @@
   .step-row,
   .gain-row,
   .demod-row,
-  .decoder-row {
+  .decoder-row,
+  .record-grid {
     display: flex;
     gap: 4px;
     align-items: center;
+  }
+
+  .record-grid {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .freq-row input {
@@ -368,5 +454,18 @@
     font-size: 10px;
     color: var(--text-secondary);
     padding: 2px 0;
+  }
+
+  .record-grid textarea {
+    resize: vertical;
+    min-height: 52px;
+  }
+
+  .record-path {
+    word-break: break-all;
+  }
+
+  .error-text {
+    color: var(--accent-red);
   }
 </style>

@@ -3,12 +3,12 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use wavecore::bookmarks::{Bookmark, BookmarkStore};
 use wavecore::captures::{
     CaptureCatalog, CaptureOpenInfo, CaptureRecord, default_capture_path, delete_capture_artifacts,
-    inspect_capture_input,
+    inspect_capture_input, sync_catalog_metadata,
 };
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::hardware::GainMode;
@@ -20,6 +20,32 @@ use wavecore::session::{Command, DemodConfig, RecordFormat, SessionConfig};
 
 use crate::bridge::{BridgeState, start_event_bridge};
 use crate::state::{AppState, RecordingContext, SessionOrigin};
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|text| {
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn normalize_tags(tags: Option<Vec<String>>) -> Vec<String> {
+    tags.unwrap_or_default()
+        .into_iter()
+        .map(|tag| tag.trim().to_string())
+        .filter(|tag| !tag.is_empty())
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecordRequest {
+    path: String,
+    format: String,
+    label: Option<String>,
+    notes: Option<String>,
+    tags: Option<Vec<String>>,
+    demod_mode: Option<String>,
+    decoder: Option<String>,
+}
 
 #[tauri::command]
 pub fn connect_device(
@@ -220,11 +246,7 @@ pub fn disable_decoder(name: String, state: State<'_, AppState>) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn start_record(
-    path: String,
-    format: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn start_record(request: RecordRequest, state: State<'_, AppState>) -> Result<(), String> {
     let cfg = state
         .session_config
         .lock()
@@ -236,22 +258,27 @@ pub fn start_record(
         .as_ref()
         .copied()
         .unwrap_or(SessionOrigin::LiveRtlSdr);
-    let fmt = match format.as_str() {
+    let fmt = match request.format.as_str() {
         "cf32" | "raw" => RecordFormat::RawCf32,
         "wav" => RecordFormat::Wav,
         "sigmf" => RecordFormat::SigMf,
-        _ => return Err(format!("Unknown format: {format}")),
+        _ => return Err(format!("Unknown format: {}", request.format)),
     };
     let metadata_format = match fmt {
         RecordFormat::RawCf32 => "cf32".to_string(),
         RecordFormat::Wav => "cf32-wav".to_string(),
         RecordFormat::SigMf => "sigmf-cf32_le".to_string(),
     };
-    let recording_path = PathBuf::from(path);
+    let recording_path = PathBuf::from(request.path);
     let gain = match cfg.gain {
         GainMode::Auto => "auto".to_string(),
         GainMode::Manual(db) => db.to_string(),
     };
+    let label = normalize_optional_text(request.label);
+    let notes = normalize_optional_text(request.notes);
+    let tags = normalize_tags(request.tags);
+    let demod_mode = normalize_optional_text(request.demod_mode);
+    let decoder = normalize_optional_text(request.decoder);
 
     {
         let mut recording = state.recording_context.lock();
@@ -267,6 +294,11 @@ pub fn start_record(
             format: metadata_format,
             device: origin.device_name().to_string(),
             source: origin.capture_source(),
+            label,
+            notes,
+            tags,
+            demod_mode,
+            decoder,
             started: false,
         });
     }
@@ -321,6 +353,26 @@ pub fn remove_capture(selector: String, delete_files: bool) -> Result<(), String
     if delete_files {
         delete_capture_artifacts(&record)?;
     }
+    catalog.save()
+}
+
+#[tauri::command]
+pub fn update_capture_metadata(
+    selector: String,
+    label: Option<String>,
+    notes: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<(), String> {
+    let mut catalog = CaptureCatalog::load();
+    let record = catalog
+        .select_mut(&selector)
+        .ok_or_else(|| format!("No capture matches selector '{selector}'."))?;
+    record.label = normalize_optional_text(label);
+    record.notes = normalize_optional_text(notes);
+    if let Some(tags) = tags {
+        record.tags = normalize_tags(Some(tags));
+    }
+    sync_catalog_metadata(record)?;
     catalog.save()
 }
 

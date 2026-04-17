@@ -126,3 +126,43 @@ fn analyze_latest_measure_handles_short_capture() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Signal Measurement"));
 }
+
+#[test]
+fn replay_capture_selector_uses_catalog_entry() {
+    let root = unique_test_dir("replay_selector");
+    let config_root = write_latest_capture_fixture(&root);
+
+    let output = run_waverunner(
+        &config_root,
+        &["replay", "--capture", "smoke-latest", "--fast"],
+    );
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Replay finished."));
+}
+
+#[test]
+fn analyze_capture_selector_measure_handles_short_capture() {
+    let root = unique_test_dir("analyze_selector");
+    let config_root = write_latest_capture_fixture(&root);
+
+    let output = run_waverunner(
+        &config_root,
+        &["analyze", "--capture", "smoke-latest", "measure"],
+    );
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Signal Measurement"));
+}

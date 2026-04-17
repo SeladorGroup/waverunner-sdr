@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use wavecore::captures::{inspect_capture_input, latest_capture};
+use wavecore::captures::{find_capture, inspect_capture_input, latest_capture};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::decoders;
 use wavecore::hardware::GainMode;
@@ -19,12 +19,19 @@ use super::parse_frequency;
 #[derive(clap::Args)]
 pub struct ReplayArgs {
     /// Input IQ capture (.cf32, .wav, .cu8, .sigmf-data, .sigmf-meta, or SigMF stem)
-    #[arg(required_unless_present = "latest", conflicts_with = "latest")]
+    #[arg(
+        required_unless_present_any = ["latest", "capture"],
+        conflicts_with_all = ["latest", "capture"]
+    )]
     pub input: Option<String>,
 
     /// Replay the newest indexed capture from the local library catalog
-    #[arg(long, conflicts_with = "input")]
+    #[arg(long, conflicts_with_all = ["input", "capture"])]
     pub latest: bool,
+
+    /// Replay one indexed capture by selector (`latest`, id, capture path, or metadata path)
+    #[arg(long, conflicts_with_all = ["input", "latest"])]
+    pub capture: Option<String>,
 
     /// Sample rate in S/s. Defaults to metadata/SigMF when available.
     #[arg(short, long, value_parser = parse_frequency)]
@@ -242,6 +249,11 @@ pub async fn run(args: ReplayArgs, _device_index: u32) -> Result<()> {
 }
 
 fn resolve_input_path(args: &ReplayArgs) -> Result<String> {
+    if let Some(selector) = args.capture.as_deref() {
+        let capture = find_capture(selector).map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(capture.metadata_path.unwrap_or(capture.path));
+    }
+
     if args.latest {
         let capture = latest_capture().map_err(|e| anyhow::anyhow!("{e}"))?;
         return Ok(capture.metadata_path.unwrap_or(capture.path));

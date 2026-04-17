@@ -147,6 +147,16 @@ impl CaptureCatalog {
         self.captures.first_mut()
     }
 
+    pub fn select(&self, selector: &str) -> Option<&CaptureRecord> {
+        if selector == "latest" {
+            return self.latest();
+        }
+
+        self.captures
+            .iter()
+            .find(|record| record_matches_selector(record, selector))
+    }
+
     pub fn select_mut(&mut self, selector: &str) -> Option<&mut CaptureRecord> {
         if selector == "latest" {
             return self.latest_mut();
@@ -251,6 +261,17 @@ pub fn latest_capture() -> Result<CaptureRecord, String> {
         .latest()
         .cloned()
         .ok_or_else(|| "No recent captures are indexed yet.".to_string())
+}
+
+pub fn find_capture(selector: &str) -> Result<CaptureRecord, String> {
+    let mut catalog = CaptureCatalog::load();
+    if catalog.prune_missing() > 0 {
+        catalog.save()?;
+    }
+    catalog
+        .select(selector)
+        .cloned()
+        .ok_or_else(|| format!("No capture matches selector '{selector}'."))
 }
 
 pub fn import_capture(

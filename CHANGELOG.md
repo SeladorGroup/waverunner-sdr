@@ -8,6 +8,18 @@ Add new notes to the top of the `Unreleased` section.
 
 ### 2026-04-17
 
+- Expanded the desktop capture workflow so GUI recordings can carry label, notes, tags, demod mode, and decoder context into the capture library instead of writing anonymous files.
+- Added inline GUI capture management: capture filtering, metadata editing, clearer capture details, and separate hide-vs-delete behavior in the library panel.
+- Added capture-selector reopen support in the CLI: `waverunner replay --capture <selector>` and `waverunner analyze --capture <selector>` now resolve indexed captures by `latest`, id, data path, or metadata path.
+- Added a Linux WebKitGTK startup workaround in the Tauri app to disable the DMA-BUF renderer by default when the environment has not already set that flag, which addresses the blank-window failure mode seen on some GPU/driver stacks.
+- Updated the GUI record controls to expose capture format plus metadata fields instead of a bare record toggle.
+- Updated README build/runtime notes to explain the new Linux GUI startup behavior and keep the X11 fallback documented.
+- Additional validation for this pass:
+  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  - `cargo test --workspace --all-features`
+  - `npm run check`
+  - `npm run build`
+  - non-intrusive Linux GUI launch debugging confirmed the existing blank-window/GBM failure mode and drove the WebKit workaround
 - Added real capture-library management in the CLI: `library import`, `library edit`, and `library remove`, including raw-capture import with explicit sample-rate/frequency overrides, catalog metadata edits, and optional file deletion on removal.
 - Added catalog-side metadata sync and artifact deletion helpers in `wavecore`, so library edits can update JSON sidecars and removals can clean up associated files instead of only dropping catalog rows.
 - Made `waverunner record` generate a default output path automatically when `-o/--output` is omitted, using the capture library path generator and the recording label when present.

@@ -73,7 +73,7 @@ cd ../../..
 cargo build -p waverunner-gui
 ```
 
-If the GUI fails to start on Wayland with a GTK/WebKit protocol error, try the X11 fallback that was validated during the beta hardening pass:
+On Linux, the GUI now forces the safer WebKitGTK DMA-BUF fallback automatically to avoid the common blank-window failure mode on some GPU/driver stacks. If startup still fails on Wayland with a GTK/WebKit protocol error, try the X11 fallback:
 
 ```bash
 GDK_BACKEND=x11 cargo run -p waverunner-gui

@@ -382,8 +382,23 @@ export async function cmdDisableDecoder(name: string): Promise<void> {
 export async function cmdStartRecord(
   path: string,
   format: string,
+  label?: string | null,
+  notes?: string | null,
+  tags?: string[] | null,
+  demodMode?: string | null,
+  decoder?: string | null,
 ): Promise<void> {
-  await invoke("start_record", { path, format });
+  await invoke("start_record", {
+    request: {
+      path,
+      format,
+      label,
+      notes,
+      tags,
+      demod_mode: demodMode,
+      decoder,
+    },
+  });
 }
 
 export async function cmdStopRecord(): Promise<void> {
@@ -406,6 +421,15 @@ export async function removeCapture(
   deleteFiles: boolean = false,
 ): Promise<void> {
   await invoke("remove_capture", { selector, deleteFiles });
+}
+
+export async function updateCaptureMetadata(
+  selector: string,
+  label?: string | null,
+  notes?: string | null,
+  tags?: string[] | null,
+): Promise<void> {
+  await invoke("update_capture_metadata", { selector, label, notes, tags });
 }
 
 export async function listBookmarks(): Promise<Bookmark[]> {
