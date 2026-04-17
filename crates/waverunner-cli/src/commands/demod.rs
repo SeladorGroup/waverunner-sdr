@@ -73,7 +73,7 @@ pub enum DemodMode {
 
 impl DemodMode {
     /// Convert CLI enum to string key for SessionManager.
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             DemodMode::Am => "am",
             DemodMode::AmSync => "am-sync",

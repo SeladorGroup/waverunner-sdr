@@ -6,7 +6,10 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::State;
 use wavecore::bookmarks::{Bookmark, BookmarkStore};
-use wavecore::captures::{CaptureCatalog, CaptureRecord, default_capture_path};
+use wavecore::captures::{
+    CaptureCatalog, CaptureOpenInfo, CaptureRecord, default_capture_path, delete_capture_artifacts,
+    inspect_capture_input,
+};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::hardware::GainMode;
 use wavecore::mode::ModeController;
@@ -100,8 +103,8 @@ pub fn disconnect_device(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn replay_file(
     path: String,
-    sample_rate: f64,
-    frequency: f64,
+    sample_rate: Option<f64>,
+    frequency: Option<f64>,
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
@@ -110,14 +113,25 @@ pub fn replay_file(
         return Err("Already connected. Disconnect first.".to_string());
     }
 
-    let device = ReplayDevice::open(std::path::Path::new(&path), sample_rate)
-        .map_err(|e| format!("Failed to open replay file: {e}"))?;
+    let capture = inspect_capture_input(std::path::Path::new(&path))
+        .map_err(|e| format!("Failed to inspect replay file: {e}"))?;
+    let resolved_sample_rate = sample_rate.or(capture.sample_rate).ok_or_else(|| {
+        "Replay sample rate is unknown. Provide one explicitly or use a capture with metadata."
+            .to_string()
+    })?;
+    let resolved_frequency = frequency.or(capture.center_freq).unwrap_or(0.0);
+
+    let device = ReplayDevice::open(
+        std::path::Path::new(&capture.data_path),
+        resolved_sample_rate,
+    )
+    .map_err(|e| format!("Failed to open replay file: {e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
         device_index: 0,
-        frequency,
-        sample_rate,
+        frequency: resolved_frequency,
+        sample_rate: resolved_sample_rate,
         gain: GainMode::Auto,
         ppm: 0,
         fft_size: 2048,
@@ -283,6 +297,11 @@ pub fn generate_capture_path(format: String, label: Option<String>) -> Result<St
 }
 
 #[tauri::command]
+pub fn inspect_capture(path: String) -> Result<CaptureOpenInfo, String> {
+    inspect_capture_input(std::path::Path::new(&path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn list_recent_captures(limit: Option<usize>) -> Vec<CaptureRecord> {
     let mut catalog = CaptureCatalog::load();
     if catalog.prune_missing() > 0 {
@@ -291,6 +310,18 @@ pub fn list_recent_captures(limit: Option<usize>) -> Vec<CaptureRecord> {
         }
     }
     catalog.list_recent(limit.unwrap_or(12))
+}
+
+#[tauri::command]
+pub fn remove_capture(selector: String, delete_files: bool) -> Result<(), String> {
+    let mut catalog = CaptureCatalog::load();
+    let record = catalog
+        .remove_selected(&selector)
+        .ok_or_else(|| format!("No capture matches selector '{selector}'."))?;
+    if delete_files {
+        delete_capture_artifacts(&record)?;
+    }
+    catalog.save()
 }
 
 #[tauri::command]

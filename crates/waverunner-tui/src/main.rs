@@ -25,6 +25,7 @@ mod waterfall;
 
 use std::env;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -38,9 +39,11 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use wavecore::analysis;
+use wavecore::captures::{inspect_capture_input, latest_capture};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::decoders;
 use wavecore::session::manager::SessionManager;
+use wavecore::session::replay::ReplayDevice;
 use wavecore::session::{Command, DemodConfig, Event, SessionConfig};
 use wavecore::util::{parse_frequency, parse_gain};
 
@@ -50,13 +53,12 @@ use input::{Action, handle_key, poll_event};
 #[derive(Parser)]
 #[command(name = "waverunner-tui", about = "WaveRunner Terminal SDR Interface")]
 struct Cli {
-    /// Center frequency (supports suffixes: k, M, G)
-    #[arg(default_value = "100M")]
-    frequency: String,
+    /// Center frequency (supports suffixes: k, M, G). Defaults to 100M for live input.
+    frequency: Option<String>,
 
-    /// Sample rate in S/s
-    #[arg(short, long, default_value = "2048000")]
-    sample_rate: String,
+    /// Sample rate in S/s. In replay mode this can be inferred from metadata.
+    #[arg(short, long)]
+    sample_rate: Option<String>,
 
     /// Gain in dB, or "auto" for AGC
     #[arg(short, long, default_value = "auto")]
@@ -77,13 +79,25 @@ struct Cli {
     /// Device index
     #[arg(short, long, default_value = "0")]
     device: u32,
+
+    /// Replay a recorded IQ capture instead of opening live hardware
+    #[arg(long, value_name = "PATH", conflicts_with = "latest")]
+    replay: Option<String>,
+
+    /// Open the newest indexed capture from the local library catalog
+    #[arg(long, conflicts_with = "replay")]
+    latest: bool,
+}
+
+#[derive(Debug)]
+struct StartupConfig {
+    session_config: SessionConfig,
+    gain_label: String,
+    replay_path: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let frequency = parse_frequency(&cli.frequency).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let sample_rate = parse_frequency(&cli.sample_rate).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let gain_mode = parse_gain(&cli.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Initialize tracing to file (not stdout — that's the TUI)
     // Initialize tracing to file — fall back to sink if open fails
@@ -107,25 +121,27 @@ fn main() -> Result<()> {
         }
     }
 
-    // Create SessionManager — handles hardware, pipeline, and DSP threads
-    let config = SessionConfig {
-        schema_version: 1,
-        device_index: cli.device,
-        frequency,
-        sample_rate,
-        gain: gain_mode,
-        ppm: cli.ppm,
-        fft_size: cli.fft_size,
-        pfa: cli.pfa,
-    };
+    let startup = resolve_startup(&cli)?;
 
     let mut registry = DecoderRegistry::new();
     decoders::register_all(&mut registry);
-    let (session, events) =
-        SessionManager::new(config, registry).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (session, events) = if let Some(path) = startup.replay_path.as_deref() {
+        let device = ReplayDevice::open(path, startup.session_config.sample_rate)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        SessionManager::new_with_device(startup.session_config.clone(), device, registry)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else {
+        SessionManager::new(startup.session_config.clone(), registry)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    };
 
     // Create application state
-    let mut app = App::new(frequency, sample_rate, cli.gain.clone(), cli.fft_size);
+    let mut app = App::new(
+        startup.session_config.frequency,
+        startup.session_config.sample_rate,
+        startup.gain_label,
+        cli.fft_size,
+    );
 
     // Set up terminal
     enable_raw_mode().context("Failed to enable raw mode")?;
@@ -431,6 +447,92 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn resolve_startup(cli: &Cli) -> Result<StartupConfig> {
+    if let Some(input) = resolve_replay_input(cli)? {
+        return resolve_replay_startup(cli, &input);
+    }
+
+    let frequency = cli
+        .frequency
+        .as_deref()
+        .map(parse_frequency)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .unwrap_or(100e6);
+    let sample_rate = cli
+        .sample_rate
+        .as_deref()
+        .map(parse_frequency)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .unwrap_or(2_048_000.0);
+    let gain_mode = parse_gain(&cli.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    Ok(StartupConfig {
+        session_config: SessionConfig {
+            schema_version: 1,
+            device_index: cli.device,
+            frequency,
+            sample_rate,
+            gain: gain_mode,
+            ppm: cli.ppm,
+            fft_size: cli.fft_size,
+            pfa: cli.pfa,
+        },
+        gain_label: cli.gain.clone(),
+        replay_path: None,
+    })
+}
+
+fn resolve_replay_input(cli: &Cli) -> Result<Option<String>> {
+    if cli.latest {
+        let capture = latest_capture().map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(Some(capture.metadata_path.unwrap_or(capture.path)));
+    }
+
+    Ok(cli.replay.clone())
+}
+
+fn resolve_replay_startup(cli: &Cli, input: &str) -> Result<StartupConfig> {
+    let capture = inspect_capture_input(Path::new(input))
+        .map_err(|e| anyhow::anyhow!("Failed to inspect replay input: {e}"))?;
+    let sample_rate = cli
+        .sample_rate
+        .as_deref()
+        .map(parse_frequency)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .or(capture.sample_rate)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Replay sample rate is unknown. Pass --sample-rate or use a capture with metadata."
+            )
+        })?;
+    let frequency = cli
+        .frequency
+        .as_deref()
+        .map(parse_frequency)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .or(capture.center_freq)
+        .unwrap_or(0.0);
+
+    Ok(StartupConfig {
+        session_config: SessionConfig {
+            schema_version: 1,
+            device_index: cli.device,
+            frequency,
+            sample_rate,
+            gain: parse_gain(&cli.gain).map_err(|e| anyhow::anyhow!("{e}"))?,
+            ppm: cli.ppm,
+            fft_size: cli.fft_size,
+            pfa: cli.pfa,
+        },
+        gain_label: "replay".to_string(),
+        replay_path: Some(PathBuf::from(capture.data_path)),
+    })
+}
+
 /// Send decoder enable/disable commands when the active decoder changes.
 fn send_decoder_change(session: &SessionManager, prev: Option<&str>, next: Option<&str>) {
     if let Some(name) = prev {
@@ -463,5 +565,76 @@ fn send_demod_change(session: &SessionManager, prev: DemodMode, next: DemodMode,
         };
         session.send(Command::StartDemod(config)).ok();
         session.send(Command::SetVolume(app.volume_f32())).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(label: &str, ext: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!("waverunner_tui_test_{label}_{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir.join(format!("capture.{ext}"))
+    }
+
+    fn replay_cli(path: String) -> Cli {
+        Cli {
+            frequency: None,
+            sample_rate: None,
+            gain: "auto".to_string(),
+            fft_size: 2048,
+            ppm: 0,
+            pfa: 1e-4,
+            device: 0,
+            replay: Some(path),
+            latest: false,
+        }
+    }
+
+    #[test]
+    fn replay_startup_uses_sidecar_metadata() {
+        let capture_path = temp_path("replay_meta", "cf32");
+        fs::write(&capture_path, vec![0_u8; 16]).unwrap();
+
+        let meta = wavecore::recording::RecordingMetadata {
+            schema_version: 1,
+            center_freq: 94.9e6,
+            sample_rate: 1.024e6,
+            gain: "auto".to_string(),
+            format: "cf32".to_string(),
+            timestamp: "2026-04-17T12:00:00Z".to_string(),
+            duration_secs: Some(0.1),
+            device: "test".to_string(),
+            samples_written: 2,
+            label: None,
+            notes: None,
+            tags: Vec::new(),
+            demod_mode: None,
+            decoder: None,
+            timeline_path: None,
+            report_path: None,
+        };
+        meta.write_sidecar(&capture_path).unwrap();
+
+        let startup = resolve_startup(&replay_cli(capture_path.display().to_string())).unwrap();
+        assert_eq!(startup.session_config.sample_rate, 1.024e6);
+        assert_eq!(startup.session_config.frequency, 94.9e6);
+        assert_eq!(startup.replay_path.unwrap(), capture_path);
+    }
+
+    #[test]
+    fn replay_startup_requires_sample_rate_without_metadata() {
+        let capture_path = temp_path("replay_plain", "cf32");
+        fs::write(&capture_path, vec![0_u8; 16]).unwrap();
+
+        let err = resolve_startup(&replay_cli(capture_path.display().to_string())).unwrap_err();
+        assert!(err.to_string().contains("Replay sample rate is unknown"));
     }
 }

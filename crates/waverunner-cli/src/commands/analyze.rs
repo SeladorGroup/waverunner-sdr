@@ -4,27 +4,33 @@ use std::time::Instant;
 use anyhow::Result;
 
 use wavecore::analysis;
+use wavecore::captures::{inspect_capture_input, latest_capture};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::dsp::decoders;
 use wavecore::hardware::GainMode;
 use wavecore::session::manager::SessionManager;
-use wavecore::session::replay::ReplayDevice;
+use wavecore::session::replay::{ReplayDevice, ReplayOptions};
 use wavecore::session::{Command, Event, SessionConfig};
 
 use super::parse_frequency;
 
 #[derive(clap::Args)]
 pub struct AnalyzeArgs {
-    /// Input IQ file (.cf32, .cu8, .wav)
-    pub input: String,
+    /// Input IQ file (.cf32, .cu8, .wav, .sigmf-data, .sigmf-meta, or SigMF stem)
+    #[arg(required_unless_present = "latest", conflicts_with = "latest")]
+    pub input: Option<String>,
 
-    /// Sample rate in S/s (e.g., 2.048M)
-    #[arg(short, long, value_parser = parse_frequency, default_value = "2.048M")]
-    pub sample_rate: f64,
+    /// Analyze the newest indexed capture from the local library catalog
+    #[arg(long, conflicts_with = "input")]
+    pub latest: bool,
 
-    /// Center frequency in Hz (e.g., 433.92M)
-    #[arg(short, long, value_parser = parse_frequency, default_value = "100M")]
-    pub frequency: f64,
+    /// Sample rate in S/s. Defaults to metadata/SigMF when available.
+    #[arg(short, long, value_parser = parse_frequency)]
+    pub sample_rate: Option<f64>,
+
+    /// Center frequency in Hz. Defaults to metadata/SigMF when available.
+    #[arg(short, long, value_parser = parse_frequency)]
+    pub frequency: Option<f64>,
 
     #[command(subcommand)]
     pub action: AnalyzeAction,
@@ -63,15 +69,33 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
         return run_bitstream(file);
     }
 
-    // Open replay file
-    let device = ReplayDevice::open(std::path::Path::new(&args.input), args.sample_rate)
-        .map_err(|e| anyhow::anyhow!("Failed to open file: {e}"))?;
+    let input = resolve_input_path(&args)?;
+    let capture = inspect_capture_input(std::path::Path::new(&input))
+        .map_err(|e| anyhow::anyhow!("Failed to inspect capture: {e}"))?;
+    let sample_rate = args
+        .sample_rate
+        .or(capture.sample_rate)
+        .ok_or_else(|| anyhow::anyhow!("Sample rate is required when capture metadata is missing. Pass --sample-rate explicitly."))?;
+    let frequency = args.frequency.or(capture.center_freq).unwrap_or(0.0);
+
+    // Analysis is an offline workflow. Run the replay path without real-time pacing
+    // and loop short captures so the session stays alive long enough to execute.
+    let device = ReplayDevice::open_with_options(
+        std::path::Path::new(&capture.data_path),
+        sample_rate,
+        ReplayOptions {
+            realtime: false,
+            looping: true,
+            ..ReplayOptions::default()
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to open file: {e}"))?;
 
     let config = SessionConfig {
         schema_version: 1,
         device_index: 0,
-        frequency: args.frequency,
-        sample_rate: args.sample_rate,
+        frequency,
+        sample_rate,
         gain: GainMode::Auto,
         ppm: 0,
         fft_size: 2048,
@@ -100,12 +124,12 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
             analysis::AnalysisRequest::AnalyzeBurst(analysis::burst::BurstConfig {
                 threshold_db: *threshold_db,
                 min_burst_samples: 10,
-                sample_rate: args.sample_rate,
+                sample_rate,
             })
         }
         AnalyzeAction::Modulation => {
             analysis::AnalysisRequest::EstimateModulation(analysis::modulation::ModulationConfig {
-                sample_rate: args.sample_rate,
+                sample_rate,
                 fft_size: 0,
             })
         }
@@ -126,20 +150,28 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
                 format: fmt,
                 content: analysis::export::ExportContent::Spectrum {
                     spectrum_db: Vec::new(), // will use latest from session
-                    sample_rate: args.sample_rate,
-                    center_freq: args.frequency,
+                    sample_rate,
+                    center_freq: frequency,
                 },
             })
         }
         AnalyzeAction::Bits { .. } => unreachable!(),
     };
 
-    println!(
-        "Analyzing {} | Rate: {:.3} MS/s | Freq: {:.6} MHz",
-        args.input,
-        args.sample_rate / 1e6,
-        args.frequency / 1e6,
-    );
+    if frequency > 0.0 {
+        println!(
+            "Analyzing {} | Rate: {:.3} MS/s | Freq: {:.6} MHz",
+            capture.data_path,
+            sample_rate / 1e6,
+            frequency / 1e6,
+        );
+    } else {
+        println!(
+            "Analyzing {} | Rate: {:.3} MS/s | Freq: (unknown)",
+            capture.data_path,
+            sample_rate / 1e6,
+        );
+    }
 
     // Let a few blocks process before sending the analysis command
     let mut blocks_seen = 0u64;
@@ -188,6 +220,17 @@ pub async fn run(args: AnalyzeArgs, _device_index: u32) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_input_path(args: &AnalyzeArgs) -> Result<String> {
+    if args.latest {
+        let capture = latest_capture().map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(capture.metadata_path.unwrap_or(capture.path));
+    }
+
+    args.input
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Analysis input path is required"))
 }
 
 fn run_bitstream(file: &str) -> Result<()> {

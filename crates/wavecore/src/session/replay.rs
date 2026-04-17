@@ -46,6 +46,24 @@ pub enum IqFormat {
     WavF32,
 }
 
+/// Replay device options.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplayOptions {
+    pub realtime: bool,
+    pub block_size: usize,
+    pub looping: bool,
+}
+
+impl Default for ReplayOptions {
+    fn default() -> Self {
+        Self {
+            realtime: true,
+            block_size: 262_144,
+            looping: false,
+        }
+    }
+}
+
 impl IqFormat {
     /// Detect format from file extension.
     fn from_path(path: &Path) -> Option<IqFormat> {
@@ -103,6 +121,15 @@ impl ReplayDevice {
     /// The format is auto-detected from the file extension. The sample
     /// rate must be provided since raw files have no metadata.
     pub fn open(path: &Path, sample_rate: f64) -> Result<Box<dyn SdrDevice>, HardwareError> {
+        Self::open_with_options(path, sample_rate, ReplayOptions::default())
+    }
+
+    /// Open a recorded IQ file for replay with explicit runtime options.
+    pub fn open_with_options(
+        path: &Path,
+        sample_rate: f64,
+        options: ReplayOptions,
+    ) -> Result<Box<dyn SdrDevice>, HardwareError> {
         let format = IqFormat::from_path(path).ok_or_else(|| {
             HardwareError::DriverError(format!(
                 "Unknown IQ format for extension: {}",
@@ -163,9 +190,9 @@ impl ReplayDevice {
             gain: Mutex::new(GainMode::Auto),
             streaming: AtomicBool::new(false),
             stop_flag: Arc::new(AtomicBool::new(false)),
-            realtime: AtomicBool::new(true),
-            block_size: 262144, // Match RTL-SDR default
-            looping: AtomicBool::new(false),
+            realtime: AtomicBool::new(options.realtime),
+            block_size: options.block_size,
+            looping: AtomicBool::new(options.looping),
         }))
     }
 

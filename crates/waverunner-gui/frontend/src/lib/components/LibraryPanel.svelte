@@ -5,7 +5,7 @@
     connected, frequency, demodMode, enabledDecoders, recordingActive,
     cmdTune, replayFile,
     listRecentCaptures, listBookmarks,
-    saveCurrentBookmark, removeBookmark,
+    saveCurrentBookmark, removeBookmark, removeCapture,
   } from '../stores/radio';
 
   let captures: CaptureRecord[] = [];
@@ -75,7 +75,17 @@
   async function replayCapture(capture: CaptureRecord) {
     try {
       error = '';
-      await replayFile(capture.path, capture.sample_rate, capture.center_freq);
+      await replayFile(capture.metadata_path ?? capture.path);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function deleteCapture(capture: CaptureRecord) {
+    try {
+      error = '';
+      await removeCapture(capture.id, false);
+      await refresh();
     } catch (e) {
       error = String(e);
     }
@@ -140,11 +150,15 @@
             {#if capture.notes}
               <div class="row-notes">{capture.notes}</div>
             {/if}
+            {#if capture.tags.length > 0}
+              <div class="row-notes">tags: {capture.tags.join(', ')}</div>
+            {/if}
             <div class="row-path">{capture.path}</div>
           </div>
           <div class="row-actions">
             <button class="ghost" onclick={() => cmdTune(capture.center_freq)} disabled={!$connected}>Tune</button>
             <button class="ghost" onclick={() => replayCapture(capture)}>Replay</button>
+            <button class="ghost danger" onclick={() => deleteCapture(capture)}>Hide</button>
           </div>
         </div>
       {/each}

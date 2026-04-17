@@ -127,6 +127,16 @@ export interface CaptureRecord {
   source: "LiveRecord" | "Import" | "ReplayExport";
 }
 
+export type CaptureMetadataSource = "recording_sidecar" | "sig_mf";
+
+export interface CaptureOpenInfo {
+  data_path: string;
+  metadata_path: string | null;
+  metadata_source: CaptureMetadataSource | null;
+  sample_rate: number | null;
+  center_freq: number | null;
+}
+
 export interface DecoderInfo {
   name: string;
   backend: string;

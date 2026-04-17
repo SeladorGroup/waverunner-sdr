@@ -464,14 +464,16 @@ impl SessionManager {
 
         // Hardware reader thread
         let device_clone = Arc::clone(&device);
-        let running_hw = Arc::clone(&running);
+        let running_hw_cb = Arc::clone(&running);
+        let running_hw_end = Arc::clone(&running);
+        let evt_tx_hw = evt_tx.clone();
         let hw_handle = std::thread::Builder::new()
             .name("session-hw".to_string())
             .spawn(move || {
                 let mut sequence = 0u64;
                 let start = Instant::now();
-                let _ = device_clone.start_rx(Box::new(move |samples| {
-                    if !running_hw.load(Ordering::Relaxed) {
+                let result = device_clone.start_rx(Box::new(move |samples| {
+                    if !running_hw_cb.load(Ordering::Relaxed) {
                         return;
                     }
                     let block = SampleBlock {
@@ -484,6 +486,16 @@ impl SessionManager {
                     let _ = producer.send(block);
                     sequence += 1;
                 }));
+
+                if let Err(e) = result {
+                    evt_tx_hw
+                        .send(Event::Error(format!("Device stream stopped: {e}")))
+                        .ok();
+                }
+
+                if running_hw_end.swap(false, Ordering::Relaxed) {
+                    device_clone.stop_rx().ok();
+                }
             })
             .map_err(|e| format!("Failed to spawn HW thread: {e}"))?;
 

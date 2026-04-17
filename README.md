@@ -33,7 +33,7 @@ If your goal is: "give me a coherent SDR platform I can inspect, extend, and run
 - **See everything** — real-time spectrum display, waterfall plots, signal detection (CFAR)
 - **Decode a broad set of protocol targets** — POCSAG pagers, ADS-B aircraft, RDS radio text, FLEX, EAS/SAME alert headers, APRS ham radio, AIS maritime, OOK devices (weather stations, TPMS, remotes), NOAA satellite images, plus an `rtl_433` bridge for 250+ additional device types
 - **Analyze signals** — power/bandwidth measurement, burst detection, modulation estimation, bitstream inspection, spectral comparison, signal tracking over time
-- **Record and replay as one workflow** — raw IQ capture with metadata, recent-capture indexing, session timeline export, and replay-first analysis
+- **Record and replay as one workflow** — raw IQ capture with metadata, recent-capture indexing, replay-first analysis, session timeline export, and metadata-aware reopen paths for recorded captures
 - **Scan intelligently** — repeated-pass scan reports, bookmark export, generated watchlist profiles, operating profiles (aviation, APRS, AIS, pager, FM survey, NOAA APT, ISM sensor hunt), frequency bookmarks, ITU band database with region auto-detection
 - **Stay healthy** — pipeline health monitoring, session checkpoints, latency tracking, load shedding under pressure
 
@@ -110,15 +110,31 @@ waverunner mode general --listen --start 118M --end 137M
 waverunner mode run ais-watch
 
 # Record raw IQ with notes and timeline export
-waverunner record 433.92M -o capture.cf32 -D 30 --label "sensor hunt" --timeline --tag 433
+waverunner record 433.92M -D 30 --label "sensor hunt" --timeline --tag 433
+waverunner record 433.92M -o capture.cf32 -D 30
 
-# Inspect recent captures or ask for a default capture path
+# Inspect, import, or manage captures in the local library
 waverunner library list
+waverunner library inspect capture.cf32
+waverunner library import old.cf32 --sample-rate 2.048M --frequency 433.92M
+waverunner library edit latest --notes "good burst" --tag review
+waverunner library remove latest
 waverunner library default-path --format raw --label test-run
 
-# Analyze a recording
+# Replay or analyze a recording using metadata/SigMF when available
+waverunner replay capture.cf32 --decoder rtl433
+waverunner replay capture.sigmf-meta --mode wfm
 waverunner analyze capture.cf32 measure
-waverunner analyze capture.cf32 modulation
+waverunner analyze capture.sigmf-meta modulation
+
+# Or jump straight to the newest indexed capture
+waverunner library latest
+waverunner replay --latest --fast
+waverunner analyze --latest measure
+
+# Open a capture in the terminal UI instead of live hardware
+waverunner-tui --replay capture.sigmf-meta
+waverunner-tui --latest
 
 # What's on this frequency? Optionally grab a short capture and report.
 waverunner identify 433.92M --capture-secs 5 --report identify.json
@@ -132,7 +148,7 @@ If you are brand new, the simplest path is:
 1. Run `waverunner tools` to see what optional decoder backends are actually available.
 2. Run `waverunner tune 162.55M` or `waverunner listen 99.9M --mode wfm` on a known local signal.
 3. Run `waverunner scan 88M 108M --passes 2 --top 10 --save-profile fm.toml` or `waverunner mode general --listen` to find active channels.
-4. Record a short capture with `waverunner record` and then inspect it with `waverunner library list` or `waverunner analyze`.
+4. Record a short capture with `waverunner record`, inspect it with `waverunner library list` / `waverunner library inspect`, and replay it with `waverunner replay` or `waverunner replay --latest`.
 5. Use `waverunner identify` or `waverunner decode list` when you want help choosing the next step.
 
 ## Architecture

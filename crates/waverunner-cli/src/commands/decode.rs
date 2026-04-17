@@ -324,7 +324,7 @@ pub async fn run(args: DecodeArgs, device_index: u32) -> Result<()> {
 // Output formatting
 // ============================================================================
 
-fn print_message(msg: &DecodedMessage, seq: u64, format: &OutputFormat) {
+pub(crate) fn print_message(msg: &DecodedMessage, seq: u64, format: &OutputFormat) {
     match format {
         OutputFormat::Text => print_message_text(msg, seq),
         OutputFormat::Json => print_message_json(msg, seq),

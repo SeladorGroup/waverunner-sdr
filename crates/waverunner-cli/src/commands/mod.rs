@@ -11,6 +11,7 @@ pub mod mode;
 pub mod probe;
 pub mod record;
 pub mod recover;
+pub mod replay;
 pub mod scan;
 pub mod tools;
 pub mod tune;
@@ -31,6 +32,8 @@ pub enum Command {
     Scan(scan::ScanArgs),
     /// Record IQ samples to a file
     Record(record::RecordArgs),
+    /// Replay a recorded IQ capture with optional demod or decoders
+    Replay(replay::ReplayArgs),
     /// Demodulate a signal and output audio
     Demod(demod::DemodArgs),
     /// Tune to a frequency and listen (auto-detects mode from band)
@@ -63,6 +66,7 @@ pub async fn execute(cmd: Command, device_index: u32) -> Result<()> {
         Command::Tune(args) => tune::run(args, device_index).await,
         Command::Scan(args) => scan::run(args, device_index).await,
         Command::Record(args) => record::run(args, device_index).await,
+        Command::Replay(args) => replay::run(args, device_index).await,
         Command::Demod(args) => demod::run(args, device_index).await,
         Command::Listen(args) => listen::run(args, device_index).await,
         Command::Library(args) => {

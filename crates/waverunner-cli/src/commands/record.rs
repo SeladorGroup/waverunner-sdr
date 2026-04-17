@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use wavecore::captures::{CaptureCatalog, CaptureSource};
+use wavecore::captures::{CaptureCatalog, CaptureSource, default_capture_path};
 use wavecore::dsp::decoder::DecoderRegistry;
 use wavecore::recording::RecordingMetadata;
 use wavecore::session::manager::SessionManager;
@@ -18,9 +18,9 @@ pub struct RecordArgs {
     #[arg(value_parser = parse_frequency)]
     pub frequency: f64,
 
-    /// Output file path
+    /// Output file path. If omitted, WaveRunner generates one in the capture library.
     #[arg(short, long)]
-    pub output: PathBuf,
+    pub output: Option<PathBuf>,
 
     /// Duration in seconds (0 = until Ctrl+C)
     #[arg(short = 'D', long, default_value = "0")]
@@ -65,6 +65,10 @@ pub struct RecordArgs {
 
 pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     let gain_mode = wavecore::util::parse_gain(&args.gain).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let output_path = args.output.clone().unwrap_or(
+        default_capture_path(&args.format, args.label.as_deref())
+            .map_err(|e| anyhow::anyhow!("Failed to create default output path: {e}"))?,
+    );
 
     let config = SessionConfig {
         schema_version: 1,
@@ -89,7 +93,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     };
     session
         .send(Command::StartRecord {
-            path: args.output.clone(),
+            path: output_path.clone(),
             format,
         })
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -103,7 +107,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
     println!(
         "Recording {:.6} MHz to {} ({}, {:.3} MS/s, {})",
         args.frequency / 1e6,
-        args.output.display(),
+        output_path.display(),
         args.format.to_uppercase(),
         args.sample_rate / 1e6,
         duration_str,
@@ -135,7 +139,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
         Some(
             args.timeline_output
                 .clone()
-                .unwrap_or_else(|| default_timeline_path(&args.output)),
+                .unwrap_or_else(|| default_timeline_path(&output_path)),
         )
     } else {
         None
@@ -214,10 +218,10 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
             .map(|path| path.display().to_string()),
         report_path: None,
     };
-    metadata.write_sidecar(&args.output)?;
+    metadata.write_sidecar(&output_path)?;
 
     let mut catalog = CaptureCatalog::load();
-    catalog.register(&args.output, &metadata, CaptureSource::LiveRecord);
+    catalog.register(&output_path, &metadata, CaptureSource::LiveRecord);
     if let Err(e) = catalog.save() {
         eprintln!("Failed to update recent capture catalog: {e}");
     }
@@ -227,7 +231,7 @@ pub async fn run(args: RecordArgs, device_index: u32) -> Result<()> {
         "\nRecording complete: {} samples ({:.1}s) written to {}",
         total_samples,
         elapsed,
-        args.output.display(),
+        output_path.display(),
     );
 
     Ok(())

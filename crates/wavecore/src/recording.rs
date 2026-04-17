@@ -45,13 +45,29 @@ pub struct RecordingMetadata {
 }
 
 impl RecordingMetadata {
-    /// Write metadata as a JSON sidecar file next to the recording.
-    pub fn write_sidecar(&self, recording_path: &Path) -> Result<(), WaveError> {
-        let sidecar_path = recording_path.with_extension("json");
-        let file = File::create(sidecar_path)?;
+    /// Write metadata to an explicit JSON path.
+    pub fn write_to_path(&self, path: &Path) -> Result<(), WaveError> {
+        let file = File::create(path)?;
         serde_json::to_writer_pretty(file, self)
             .map_err(|e| WaveError::Config(format!("failed to write metadata: {e}")))?;
         Ok(())
+    }
+
+    /// Write metadata as a JSON sidecar file next to the recording.
+    pub fn write_sidecar(&self, recording_path: &Path) -> Result<(), WaveError> {
+        self.write_to_path(&recording_path.with_extension("json"))
+    }
+
+    /// Read a metadata sidecar from a specific JSON path.
+    pub fn read_from_path(path: &Path) -> Result<Self, WaveError> {
+        let file = File::open(path)?;
+        serde_json::from_reader(file)
+            .map_err(|e| WaveError::Config(format!("invalid recording metadata: {e}")))
+    }
+
+    /// Read metadata written next to a recording.
+    pub fn read_sidecar(recording_path: &Path) -> Result<Self, WaveError> {
+        Self::read_from_path(&recording_path.with_extension("json"))
     }
 }
 

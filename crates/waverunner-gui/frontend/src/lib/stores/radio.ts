@@ -17,6 +17,7 @@ import type {
   TrackingSnapshot,
   Bookmark,
   CaptureRecord,
+  CaptureOpenInfo,
   DecoderInfo,
 } from "../types";
 
@@ -316,20 +317,36 @@ export async function disconnectDevice(): Promise<void> {
 
 export async function replayFile(
   path: string,
-  sample_rate: number,
-  freq: number,
+  sample_rate?: number | null,
+  freq?: number | null,
 ): Promise<void> {
   if (get(connected)) {
     await disconnectDevice();
   }
+  let captureInfo: CaptureOpenInfo | null = null;
+  if (sample_rate == null || freq == null) {
+    try {
+      captureInfo = await inspectCapture(path);
+    } catch {
+      captureInfo = null;
+    }
+  }
+  const resolvedRate = sample_rate ?? captureInfo?.sample_rate ?? null;
+  const resolvedFreq = freq ?? captureInfo?.center_freq ?? null;
   await invoke("replay_file", {
     path,
-    sampleRate: sample_rate,
-    frequency: freq,
+    sampleRate: resolvedRate,
+    frequency: resolvedFreq,
   });
   connected.set(true);
-  frequency.set(freq);
-  sampleRate.set(sample_rate);
+  frequency.set(resolvedFreq ?? 0);
+  if (resolvedRate != null) {
+    sampleRate.set(resolvedRate);
+  }
+}
+
+export async function inspectCapture(path: string): Promise<CaptureOpenInfo> {
+  return await invoke("inspect_capture", { path });
 }
 
 export async function cmdTune(freq: number): Promise<void> {
@@ -382,6 +399,13 @@ export async function generateCapturePath(
 
 export async function listRecentCaptures(limit?: number): Promise<CaptureRecord[]> {
   return await invoke("list_recent_captures", { limit });
+}
+
+export async function removeCapture(
+  selector: string,
+  deleteFiles: boolean = false,
+): Promise<void> {
+  await invoke("remove_capture", { selector, deleteFiles });
 }
 
 export async function listBookmarks(): Promise<Bookmark[]> {

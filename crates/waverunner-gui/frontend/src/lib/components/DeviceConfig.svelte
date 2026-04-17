@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { connected, connectDevice, disconnectDevice, replayFile, getAvailableDevices } from '../stores/radio';
-  import type { DeviceInfo, SessionConfig } from '../types';
+  import { connected, connectDevice, disconnectDevice, replayFile, getAvailableDevices, inspectCapture } from '../stores/radio';
+  import type { CaptureOpenInfo, DeviceInfo, SessionConfig } from '../types';
 
   let showModal = $state(false);
   let devices = $state<DeviceInfo[]>([]);
@@ -9,8 +9,9 @@
   let rateStr = $state('2.048');
   let fftSize = $state(2048);
   let replayPath = $state('');
-  let replayRate = $state('2.048');
-  let replayFreq = $state('100');
+  let replayRate = $state('');
+  let replayFreq = $state('');
+  let replayInfo = $state<CaptureOpenInfo | null>(null);
   let loading = $state(false);
   let error = $state('');
 
@@ -30,6 +31,17 @@
   function close() {
     showModal = false;
     error = '';
+    replayInfo = null;
+  }
+
+  function parseOptionalMsps(value: string): number | null {
+    const parsed = Number.parseFloat(value.trim());
+    return Number.isFinite(parsed) ? parsed * 1e6 : null;
+  }
+
+  function parseOptionalMhz(value: string): number | null {
+    const parsed = Number.parseFloat(value.trim());
+    return Number.isFinite(parsed) ? parsed * 1e6 : null;
   }
 
   async function doConnect() {
@@ -60,12 +72,37 @@
     error = '';
     try {
       await replayFile(
-        replayPath,
-        parseFloat(replayRate) * 1e6,
-        parseFloat(replayFreq) * 1e6,
+        replayPath.trim(),
+        parseOptionalMsps(replayRate),
+        parseOptionalMhz(replayFreq),
       );
       close();
     } catch (e) {
+      error = String(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function inspectReplayPath() {
+    const path = replayPath.trim();
+    if (!path) {
+      error = 'Enter a capture path first.';
+      return;
+    }
+
+    loading = true;
+    error = '';
+    try {
+      replayInfo = await inspectCapture(path);
+      if (!replayRate && replayInfo.sample_rate != null) {
+        replayRate = (replayInfo.sample_rate / 1e6).toFixed(3);
+      }
+      if (!replayFreq && replayInfo.center_freq != null) {
+        replayFreq = (replayInfo.center_freq / 1e6).toFixed(6);
+      }
+    } catch (e) {
+      replayInfo = null;
       error = String(e);
     } finally {
       loading = false;
@@ -139,15 +176,45 @@
         </div>
         <div class="form-row">
           <label for="dc-rrate">Rate (MS/s)</label>
-          <input id="dc-rrate" type="text" bind:value={replayRate} />
+          <input id="dc-rrate" type="text" bind:value={replayRate} placeholder="auto from metadata" />
         </div>
         <div class="form-row">
           <label for="dc-rfreq">Freq (MHz)</label>
-          <input id="dc-rfreq" type="text" bind:value={replayFreq} />
+          <input id="dc-rfreq" type="text" bind:value={replayFreq} placeholder="auto from metadata" />
         </div>
-        <button class="primary" onclick={doReplay} disabled={loading || !replayPath}>
-          {loading ? 'Loading...' : 'Replay'}
-        </button>
+        <div class="button-row">
+          <button onclick={inspectReplayPath} disabled={loading || !replayPath.trim()}>
+            {loading ? 'Inspecting...' : 'Inspect Metadata'}
+          </button>
+          <button class="primary" onclick={doReplay} disabled={loading || !replayPath.trim()}>
+            {loading ? 'Loading...' : 'Replay'}
+          </button>
+        </div>
+        {#if replayInfo}
+          <div class="replay-info">
+            <div><span>Data:</span> {replayInfo.data_path}</div>
+            {#if replayInfo.metadata_path}
+              <div><span>Metadata:</span> {replayInfo.metadata_path}</div>
+            {/if}
+            {#if replayInfo.metadata_source}
+              <div><span>Source:</span> {replayInfo.metadata_source}</div>
+            {/if}
+            <div>
+              <span>Resolved:</span>
+              {#if replayInfo.sample_rate != null}
+                {(replayInfo.sample_rate / 1e6).toFixed(3)} MS/s
+              {:else}
+                rate unknown
+              {/if}
+              ,
+              {#if replayInfo.center_freq != null}
+                {(replayInfo.center_freq / 1e6).toFixed(6)} MHz
+              {:else}
+                center frequency unknown
+              {/if}
+            </div>
+          </div>
+        {/if}
       </div>
 
       {#if error}
@@ -224,6 +291,31 @@
   .form-row input,
   .form-row select {
     flex: 1;
+  }
+
+  .button-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .button-row button {
+    flex: 1;
+  }
+
+  .replay-info {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+    word-break: break-word;
+  }
+
+  .replay-info span {
+    color: var(--text-primary);
   }
 
   .error {
